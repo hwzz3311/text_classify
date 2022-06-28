@@ -37,7 +37,7 @@
 1、准备数据，数据准备示例：{"label":"----","text":"------"}，将自定义的数据目录放在assets/data/
 2、开始训练：
 
-    示例：python -m src.run --model FastText --do_train --data_dir assets/data/gr1_清洁能源 --gpu_ids 0 --batch_size 512
+    示例：python -m src.run --model FastText --do_train true --data_dir assets/data/gr1_清洁能源 --gpu_ids 0 --batch_size 512
     
     查看更多参数：python -m src.run -h
 
