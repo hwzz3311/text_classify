@@ -15,9 +15,9 @@ class BaseArgs(object):
     def initialize(parser: argparse.ArgumentParser):
         parser.add_argument("--model", required=True, type=str, choices=get_all_models(), help=f"choices from :{'、'.join(get_all_models())}")
 
-        parser.add_argument("--do_train", action="store_false", help="do train ?")
-        parser.add_argument("--do_dev", action="store_true")
-        parser.add_argument("--do_test", action="store_true")
+        parser.add_argument("--do_train", default=False, type=bool, help="do train ?")
+        parser.add_argument("--do_dev", default=True, type=bool)
+        parser.add_argument("--do_test", default=True, type=bool)
 
         parser.add_argument("--test_file", default=None, type=str, help="do test file path!")
 

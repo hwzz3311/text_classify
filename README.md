@@ -41,7 +41,7 @@
     
     查看更多参数：python -m src.run -h
 
-    ps：--bert_type可以指定 bert类型或者目录
+    ps：--bert_type可以指定 bert类型或者目录clif
 
 3、将训练的模型使用flask启动，进行接口测试
 
