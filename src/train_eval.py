@@ -40,7 +40,8 @@ def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
     if "bert" in config.model_name.lower():
         scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9)
     total_batch = 0  # 记录进行到多少batch
-    dev_best_loss = float('inf')
+    dev_best_loss = 1
+    dev_best_acc = 0
     last_improve = 0  # 记录上次验证集loss下降的batch数
     flag = False  # 记录是否很久没有效果提升
 
@@ -71,13 +72,14 @@ def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
                 dev_acc, dev_loss = evaluate(config, model, dev_iter)
                 if dev_loss < dev_best_loss:
                     dev_best_loss = dev_loss
+                    dev_best_acc = dev_acc
                     torch.save(model.state_dict(), config.save_path)
                     improve = '*'
                     last_improve = total_batch
                 else:
                     improve = ''
                 time_dif = get_time_dif(start_time)
-                msg = 'Iter: {0:>6},  Train Loss: {1:>5.2},  Train Acc: {2:>6.2%},  Val Loss: {3:>5.2},  Val Acc: {4:>6.2%},  Time: {5} {6}'
+                msg = 'Iter: {0:>6},  Train Loss: {1:>5.8},  Train Acc: {2:>6.2%},  Val Loss: {3:>5.8},  Val Acc: {4:>6.2%},  Time: {5} {6}'
                 print(msg.format(total_batch, loss.item(), train_acc, dev_loss, dev_acc, time_dif, improve))
                 writer.add_scalar("loss/train", loss.item(), total_batch)
                 writer.add_scalar("loss/dev", dev_loss, total_batch)
@@ -139,8 +141,10 @@ def evaluate(config: BaseConfig, model: nn.Module, data_iter, test_mode=False):
         report = None
         confusion = None
         try:
-            report = metrics.classification_report(labels_all, predict_all, target_names=config.class_ids, digits=4)
+            report = metrics.classification_report(labels_all, predict_all)
+            print(report)
             confusion = metrics.confusion_matrix(labels_all, predict_all)
+            print(confusion)
         except:
             pass
         # 将预测结果写到文件

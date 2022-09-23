@@ -46,5 +46,6 @@ class Model(nn.Module):
         mask = x[2]  # 对padding部分进行mask，和句子一个size，padding部分用0表示，如：[1, 1, 1, 1, 0, 0]
 
         out: MaskedLMOutput = self.bert(context, attention_mask=mask)
-        out = self.fc(out.get("pooler_output"))
+        out = self.dropout(out.get("pooler_output"))
+        out = self.fc(out)
         return out

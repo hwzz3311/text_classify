@@ -47,7 +47,7 @@ assert os.path.exists(args.check_point_path), "check point file not find !"
 config.save_path = args.check_point_path
 if config.device.type == "cpu":
     model.load_state_dict(torch.load(config.save_path, map_location="cpu"))
-    model = model.module
+    # model = model.module
 else:
     model.load_state_dict(torch.load(config.save_path))
 model.eval()
@@ -96,7 +96,6 @@ def hi():
 @app.route("/text_classify", methods=["POST"])
 def text_classify_predict():
     query = request.get_json()
-    request.parameter_storage_class
     content = query['content']
     sentences = [content]
     test_data = build_by_sentence(config, sentences, vocab, 0, config.pad_size)
@@ -104,10 +103,10 @@ def text_classify_predict():
     with torch.no_grad():
         outputs = model(test_data)
         try:
-            predict_result = torch.max(outputs.data, 1)[1].cpu()
+            predict_result = torch.max(outputs.data, dim=1)[1].cpu()
         except:
             outputs = torch.unsqueeze(outputs, 0)
-            predict_result = torch.max(outputs.data, 1)[1].cpu()
+            predict_result = torch.max(outputs.data, dim=1)[1].cpu()
 
     predict_result = predict_result.numpy().tolist()
     # print(predict_result)
@@ -118,4 +117,4 @@ def text_classify_predict():
 
 if __name__ == '__main__':
     # app.run(host="0.0.0.0",port="5005",debug=True)
-    app.run(host="0.0.0.0", port="5000", debug=True)
+    app.run(host="0.0.0.0", port="5005", debug=True)

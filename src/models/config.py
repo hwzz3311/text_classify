@@ -15,8 +15,9 @@ class BaseConfig(object):
         self.local_model = True if os.path.exists(args.bert_type) else False
         self.bert_dir = args.bert_type if self.local_model else None
         dir_list = [dir_name for dir_name in os.listdir(os.path.join(os.path.dirname(__file__), "../../assets/data/"))]
-        assert os.path.exists(args.data_dir), f"choose a dataset : {', '.join(dir_list)}"
+        assert os.path.exists(os.path.join(os.path.dirname(__file__), "../../", args.data_dir)), f"choose a dataset : {', '.join(dir_list)}"
         self.data_dir = args.data_dir
+        args.data_dir = os.path.join(os.path.dirname(__file__), "../../", args.data_dir)
         self.train_file = os.path.join(args.data_dir, "train.json")
         self.eval_file = os.path.join(args.data_dir, "eval.json")
         self.test_file = args.test_file if args.test_file is not None and len(args.test_file) and\

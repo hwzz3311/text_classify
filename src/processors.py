@@ -51,7 +51,7 @@ def build_by_sentence(config: Config, sentences, vocab, label, pad_size=32):
                     mask = [1] * pad_size
                     token_ids = token_ids[:pad_size]
                     seq_len = pad_size
-            contents.append((token_ids, config.class_list.index(label), seq_len, mask))
+            contents.append((token_ids, label, seq_len, mask))
         else:
             token = tokenizer(sentence)
             seq_len = len(token)
@@ -75,9 +75,9 @@ def build_by_sentence(config: Config, sentences, vocab, label, pad_size=32):
                     bigram.append(biGramHash(words_line, i, buckets))
                     trigram.append(triGramHash(words_line, i, buckets))
                 # -----------------
-                contents.append((words_line, config.class_list.index(label), seq_len, bigram, trigram))
+                contents.append((words_line, label, seq_len, bigram, trigram))
             else:
-                contents.append((words_line, config.class_list.index(label), seq_len))
+                contents.append((words_line, label, seq_len))
 
     return contents  # [([...], 0), ([...], 1), ...]
 
