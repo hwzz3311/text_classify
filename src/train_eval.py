@@ -10,12 +10,17 @@ from torch import nn
 from torch.optim import AdamW, Adam
 from torch.nn import functional as F
 
+from src.bootstrapping_loss.loss import SoftBootstrappingLoss, HardBootstrappingLoss
+
+label_smoothing = 0.0005
+
 from torch.utils.tensorboard import SummaryWriter
 from transformers import get_linear_schedule_with_warmup
 
 from src.models.config import BaseConfig
 from src.processors import out_predict_dataset
 from src.utils.model_utils import get_time_dif
+
 
 def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
     start_time = time.time()
@@ -44,9 +49,17 @@ def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
     dev_best_acc = 0
     last_improve = 0  # 记录上次验证集loss下降的batch数
     flag = False  # 记录是否很久没有效果提升
+    if config.loss_fun == "cross_entropy":
+        loss_func = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
+    elif config.loss_fun == "soft_bootstrapping_loss":
+        loss_func = SoftBootstrappingLoss(beta=0.95, as_pseudo_label=True)
+    elif config.loss_fun == "hard_bootstrapping_loss":
+        loss_func = HardBootstrappingLoss(beta=0.8)
+
 
     writer = SummaryWriter(log_dir=config.log_path + '/' + time.strftime('%m-%d_%H.%M', time.localtime()))
     os.makedirs(os.path.dirname(config.save_path), exist_ok=True)
+    print(f"train_iter length:{len(train_iter)}")
     for epoch in range(config.num_epochs):
         print('Epoch [{}/{}]'.format(epoch + 1, config.num_epochs))
         print(f"time_dif : {get_time_dif(start_time)}")
@@ -57,14 +70,14 @@ def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
             # print(f"train - outputs:{outputs.shape}, labels : {labels.shape}")
             model.zero_grad()
             try:
-                loss = F.cross_entropy(outputs, labels)
+                loss = loss_func(outputs, labels)
             except:
                 outputs = torch.unsqueeze(outputs, 0)
-                loss = F.cross_entropy(outputs, labels)
+                loss = loss_func(outputs, labels)
             loss.backward()
             optimizer.step()
 
-            if total_batch % 100 == 0:
+            if total_batch % min(20, len(train_iter)) == 0:
                 # 每多少轮输出在训练集和验证集上的效果
                 true = labels.data.cpu()
                 predic = torch.max(outputs.data, 1)[1].cpu()
@@ -127,10 +140,10 @@ def evaluate(config: BaseConfig, model: nn.Module, data_iter, test_mode=False):
             outputs = model(texts)
             # print(f"evaluate - outputs : {outputs.shape} , labels : {labels.shape}")
             try:
-                loss = F.cross_entropy(outputs, labels)
+                loss = F.cross_entropy(outputs, labels, label_smoothing=label_smoothing)
             except:
                 outputs = torch.unsqueeze(outputs, 0)
-                loss = F.cross_entropy(outputs, labels)
+                loss = F.cross_entropy(outputs, labels, label_smoothing=label_smoothing)
             loss_total += loss
             labels = labels.data.cpu().numpy()
             predict = torch.max(outputs.data, dim=1)[1].cpu().numpy()

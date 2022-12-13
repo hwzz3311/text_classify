@@ -34,10 +34,6 @@ class Model(nn.Module):
         # 添加rcnn
         self.rcnn = types.MethodType(add_rcnn, self)
         self.rcnn(config)
-        # self.lstm = nn.LSTM(config.embed, config.hidden_size, config.num_layers,
-        #                     bidirectional=True, batch_first=True, dropout=config.dropout)
-        # self.maxpool = nn.MaxPool1d(config.pad_size)
-        # self.fc = nn.Linear(config.hidden_size * 2 + config.embed, config.num_classes)
 
     def forward(self, x):
         x, _ = x
@@ -49,4 +45,3 @@ class Model(nn.Module):
         out = self.maxpool(out).squeeze()
         out = self.fc(out)
         return out
-

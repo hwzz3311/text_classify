@@ -58,13 +58,13 @@ def add_rcnn(cls, config: BaseConfig):
     if "bert" in config.model_name.lower():
         cls.lstm = nn.LSTM(config.hidden_size, config.rnn_hidden, config.num_layers,
                             bidirectional=True, batch_first=True, dropout=config.dropout)
-        cls.maxpool = nn.MaxPool1d(config.pad_size)
+        cls.maxpool = nn.MaxPool1d(int(config.batch_size / 2) if int(config.batch_size / 2) > 0 else 1)
         cls.fc = nn.Linear(config.rnn_hidden * 2 + config.hidden_size, config.num_classes)
     else:
         cls.lstm = nn.LSTM(config.embed, config.hidden_size, config.num_layers,
                            bidirectional=True, batch_first=True, dropout=config.dropout)
 
-        cls.maxpool = nn.MaxPool1d(config.pad_size)
+        cls.maxpool = nn.MaxPool1d(int(config.batch_size / 2) if int(config.batch_size / 2) > 0 else 1)
         cls.fc = nn.Linear(config.hidden_size * 2 + config.embed, config.num_classes)
-
+    print(f"int(config.batch_size / 2) =  {int(config.batch_size / 2) if int(config.batch_size / 2) > 0 else 1}")
     return cls

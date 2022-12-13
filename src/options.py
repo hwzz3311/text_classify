@@ -37,8 +37,10 @@ class BaseArgs(object):
         parser.add_argument('--embedding', default='random', type=str,
                             help='random or embedding_SougouNews.npz / embedding_Tencent.npz')
         parser.add_argument("--check_point_path", default=None, help="predict models check point path")
-        parser.add_argument("--shuffle", action="store_true", help="dataloader shuffle ?")
-
+        parser.add_argument("--shuffle", default=True, action="store_true", help="dataloader shuffle ?")
+        parser.add_argument("--loss", type=str, default="cross_entropy", help="loss function",
+                            choices=["cross_entropy", "soft_bootstrapping_loss", "hard_bootstrapping_loss"], )
+        parser.add_argument("--loss_beta", type=float, help="loss beta")
 
         return parser
 

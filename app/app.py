@@ -4,6 +4,7 @@ import logging
 import os
 import pickle as pkl
 import time
+from functools import wraps
 
 import numpy as np
 
@@ -53,6 +54,27 @@ else:
 model.eval()
 print('"bert" in config.model_name.lower() ： ', "bert" in config.model_name.lower())
 logger.info(config.__dict__)
+softmax_fun = torch.nn.Softmax(dim=1)
+
+
+def log_filter(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        start = 1000 * time.time()
+        app.logger.info(f"=============  Begin: {func.__name__}  =============")
+        app.logger.info(f"Args: {kwargs}")
+        try:
+            rsp = func(*args, **kwargs)
+            app.logger.info(f"Response: {rsp}")
+            end = 1000 * time.time()
+            app.logger.info(f"Time consuming: {end - start}ms")
+            app.logger.info(f"=============   End: {func.__name__}   =============\n")
+            return rsp
+        except Exception as e:
+            app.logger.error(repr(e))
+            raise e
+
+    return wrapper
 
 
 def _to_tensor(config, datas):
@@ -75,6 +97,7 @@ app = Flask(__name__)
 
 
 @app.route("/", methods=["POST", "GET"])
+@log_filter
 def hi():
     return jsonify({
         [
@@ -94,12 +117,15 @@ def hi():
 
 
 @app.route("/text_classify", methods=["POST"])
+@log_filter
 def text_classify_predict():
     query = request.get_json()
     content = query['content']
+    threshold = query.get('threshold', 0.5)
     sentences = [content]
     test_data = build_by_sentence(config, sentences, vocab, 0, config.pad_size)
     test_data = _to_tensor(config, test_data)
+    sigmoid_output_list = [-1, -1]
     with torch.no_grad():
         outputs = model(test_data)
         try:
@@ -107,14 +133,37 @@ def text_classify_predict():
         except:
             outputs = torch.unsqueeze(outputs, 0)
             predict_result = torch.max(outputs.data, dim=1)[1].cpu()
+        # print(outputs.data)
 
-    predict_result = predict_result.numpy().tolist()
-    # print(predict_result)
+        # sigmoid_output = torch.sigmoid(outputs)
+        softmax_output = softmax_fun(outputs)
+        # print(sigmoid_output.data.cpu())
+        print(softmax_output.data.cpu())
+        # sigmoid_output_list = sigmoid_output.data.cpu().numpy().tolist()
+        softmax_output_list = softmax_output.data.cpu().numpy().tolist()
+        outputs = softmax_output
+        # max_index = np.argmax(outputs.cpu().numpy().tolist())
+        # softmax_max_index = np.argmax(softmax_output.cpu().numpy().tolist())
+        predict = torch.where(outputs > threshold, torch.ones_like(outputs), torch.zeros_like(outputs))
+        # print(predict)
+        predict_result = predict.cpu().numpy().tolist()
+    print(predict_result)
+    print(np.argmax(predict_result[0]))
+    # print("sigmoid_max_index", config.class_list[max_index])
+    # print("softmax_max_index", config.class_list[softmax_max_index])
+    class_score = {config.class_list[i]: x for i, x in enumerate(softmax_output_list[0])}
+    # softmax_class_score = {config.class_list[i]: x for i, x in enumerate(softmax_output_list[0])}
 
     return jsonify({"content": content,
-                    "result": predict_result})
+                    "result": config.class_list[np.argmax(predict_result[0])],
+                    # "sigmoid_result": config.class_list[max_index],
+                    # "softmax_result": config.class_list[softmax_max_index],
+                    "class_score": class_score,
+                    # "sigmoid_class_score": class_score,
+                    # "softmax_class_score": softmax_class_score
+                    })
 
 
 if __name__ == '__main__':
     # app.run(host="0.0.0.0",port="5005",debug=True)
-    app.run(host="0.0.0.0", port="5005", debug=True)
+    app.run(host="0.0.0.0", port="5000", debug=True)

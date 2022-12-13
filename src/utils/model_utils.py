@@ -79,11 +79,11 @@ def get_vocab(config: BaseConfig, use_word=False):
         tokenizer = lambda x: x.split(" ")  # 空格分割
     else:
         tokenizer = lambda x: [y for y in x]  # char分类
-    if os.path.exists(config.vocab_path):
-        vocab = pickle.load(open(config.vocab_path, "rb"))
-    else:
-        vocab = build_vocab(config.train_file, tokenizer, max_size=MAX_VOCAB_SIZE, min_freq=1)
-        pickle.dump(vocab, open(config.vocab_path, "wb"))
+    # if os.path.exists(config.vocab_path):
+    #     vocab = pickle.load(open(config.vocab_path, "rb"))
+    # else:
+    vocab = build_vocab(config.train_file, tokenizer, max_size=MAX_VOCAB_SIZE, min_freq=1)
+    pickle.dump(vocab, open(config.vocab_path, "wb"))
     print(f"Vocab size:{len(vocab)}")
     return vocab
 

@@ -38,6 +38,8 @@
 2、开始训练：
 
     示例：python -m src.run --model FastText --do_train true --data_dir assets/data/gr1_清洁能源 --gpu_ids 0 --batch_size 512
+    python -m src.run --model Bert --do_train true --data_dir assets/data/topic_环境违规_gpt --gpu_ids 1 --batch_size 120 --max_seq_len 300 --num_epochs 20 --check_point_path assets/data/topic_环境违规_gpt/saved_dict/Bert/chinese-bert-wwm-ext.cpkt 
+    python -m src.run --model Bert --do_train true --data_dir assets/data/topic_排放超标_gpt --gpu_ids 1 --batch_size 120 --max_seq_len 300 --num_epochs 20 --check_point_path assets/data/topic_排放超标_gpt/saved_dict/Bert/chinese-bert-wwm-ext.cpkt 
     
     查看更多参数：python -m src.run -h
 
@@ -46,6 +48,8 @@
 3、将训练的模型使用flask启动，进行接口测试
 
     python -m app.app --model FastText --data_dir assets/data/gr1_清洁能源 --gpu_ids 0 --check_point_path ****
+    python -m app.app --model Bert --data_dir assets/data/topic_环境违规_4 --gpu_ids 1 --check_point_path ****
+    python -m app.app --model Bert --data_dir assets/data/topic_排放超标_gpt --gpu_ids 1 --max_seq_len 300 --check_point_path ****
 
     ps：check_point_path是可选选项，为空的时候会自动加载data_dir目录下的saved_dict/{model}.cpkt
 

@@ -62,6 +62,7 @@ class BaseConfig(object):
         self.embedding = args.embedding
         self.check_point_path = args.check_point_path
         self.shuffle = args.shuffle
+        self.loss_fun = args.loss
 
         self.do_train = args.do_train
         self.do_dev = args.do_dev

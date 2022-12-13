@@ -115,7 +115,10 @@ class build_dataset(Dataset):
 
     def __getitem__(self, index):
         json_data = self.data[index]
-        content, label = json_data["text"], json_data["label"]
+        try:
+            content, label = json_data["text"], json_data["label"]
+        except KeyError:
+            print(json_data)
         words_line = []
         if "bert" in self.config.model_name.lower():
             token = self.config.tokenizer.tokenize(content)
