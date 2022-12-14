@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+</head>
+<body>
+<script src="https://code.jquery.com/jquery-1.12.4.min.js"></script>
+
+<p>
+    <textarea cols="100" rows="3" type="text" placeholder="输入测试数据" id="myInput" ></textarea>
+    <button id="button" type='button'> 发送请求</button>
+</p>
+
+
+<div id="result">
+</div>
+<script>
+    $(document).ready(function () {
+        $("#button").click(function (event) {
+            var post_data = {}
+            post_data["content"] = $("#myInput").val()
+            $.ajax({
+                 async: false,
+                 dataType: 'json',
+                 timeout: 30000,
+                 type: 'post',
+                url: '/shap_analysis',
+                 data: JSON.stringify(post_data),
+                 success: function (data){
+                     $("#result").append(data["shap_result"]);
+                }
+             });
+        });
+    });
+</script>
+</body>
+</html>

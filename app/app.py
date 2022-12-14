@@ -1,5 +1,6 @@
 import argparse
 import importlib
+import json
 import logging
 import os
 import pickle as pkl
@@ -7,15 +8,19 @@ import time
 from functools import wraps
 
 import numpy as np
+import shap
 
 import torch
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template, send_from_directory
 from importlib import import_module
+
+from markupsafe import Markup
 
 from src.models import FastText
 from src.options import RunArgs
-from src.processors import build_by_sentence
+from src.processors import build_by_sentence, CLS
 from src.utils.model_utils import set_seed, get_vocab, init_network, build_vocab
+from src.utils.shap_plots_text import text as shap_plots_text
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
@@ -93,7 +98,55 @@ def _to_tensor(config, datas):
     return x, seq_len
 
 
+def shap_predict_fun(datas, device=config.device, tokenizer=config.tokenizer, pad_size=config.pad_size):
+    datas_tokens = []
+    for x in datas:
+        token = tokenizer.tokenize(x)
+        token = [CLS] + token
+        seq_len = len(token)
+        mask = []
+        token_ids = tokenizer.convert_tokens_to_ids(token)
+        if pad_size:
+            if len(token) < pad_size:
+                mask = [1] * len(token_ids) + [0] * (pad_size - len(token))
+                token_ids += ([0] * (pad_size - len(token)))
+            else:
+                mask = [1] * pad_size
+                token_ids = token_ids[:pad_size]
+                seq_len = pad_size
+        datas_tokens.append({
+            "input_ids": token_ids,
+            "seq_len": seq_len,
+            "mask": mask
+        })
+
+    input_ids = torch.LongTensor([_["input_ids"] for _ in datas_tokens]).to(device)
+    seq_len = torch.LongTensor([_["seq_len"] for _ in datas_tokens]).to(device)
+    mask = torch.LongTensor([_["mask"] for _ in datas_tokens]).to(device)
+    X = (input_ids, seq_len, mask)
+
+    with torch.no_grad():
+        outputs = model(X)
+        _outputs = outputs.detach().cpu().numpy()
+        scores = (np.exp(_outputs).T / np.exp(_outputs).sum(-1)).T
+        try:
+            predict_result = torch.max(outputs.data, dim=1)[1].cpu()
+        except:
+            outputs = torch.unsqueeze(outputs, 0)
+            predict_result = torch.max(outputs.data, dim=1)[1].cpu()
+
+        softmax_output = softmax_fun(outputs)
+        # print(sigmoid_output.data.cpu())
+        # sigmoid_output_list = sigmoid_output.data.cpu().numpy().tolist()
+        softmax_output = softmax_output.detach().cpu().numpy()
+        return softmax_output
+
+
 app = Flask(__name__)
+
+masker = shap.maskers.Text(r".")
+
+explainer = shap.Explainer(shap_predict_fun, masker, output_names=config.class_list)
 
 
 @app.route("/", methods=["POST", "GET"])
@@ -114,6 +167,29 @@ def hi():
              }}
         ]
     })
+
+
+@app.route("/shap_analysis", methods=["POST", "GET"])
+@log_filter
+def shap_analysis():
+    if request.method == 'GET':
+        return render_template('base.html')
+    if request.method == 'POST':
+        query = None
+        if query is None:
+            query = json.loads(request.get_data())
+
+        if query is None:
+            query = request.form.to_dict()
+        # 由于分词的时候会莫名的删除一个字符，所以这里就添加一个空白字符
+        content = query['content'] + " "
+        shap_values = explainer([content])
+        s = shap_plots_text(shap_values)
+        # with open("./save.html", "w") as f:
+        #     f.write(s)
+        return jsonify({"shap_result": s})
+
+    # return send_from_directory(os.path.dirname(__file__), "save.html")
 
 
 @app.route("/text_classify", methods=["POST"])
