@@ -401,7 +401,7 @@ class DatasetIterBertAtt:
         token_dict = {}
         out = []
         labels = []
-        for index, line in tqdm(enumerate(dataset), total=len(dataset)):
+        for index, line in enumerate(dataset):
             context = line['text']
             label = line['label']
             label = class_list.index(label)
