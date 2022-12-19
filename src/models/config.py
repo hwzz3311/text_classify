@@ -1,5 +1,6 @@
 import argparse
 import os
+import platform
 
 import torch
 
@@ -15,7 +16,7 @@ class BaseConfig(object):
         self.local_model = True if os.path.exists(args.bert_type) else False
         self.bert_dir = args.bert_type if self.local_model else None
         dir_list = [dir_name for dir_name in os.listdir(os.path.join(os.path.dirname(__file__), "../../assets/data/"))]
-        assert os.path.exists(os.path.join(os.path.dirname(__file__), "../../", args.data_dir)), f"choose a dataset : {', '.join(dir_list)}"
+        assert os.path.exists(os.path.join(os.path.dirname(__file__), "../../", args.data_dir)), f"not find dataset : {args.data_dir} , choose a dataset : {', '.join(dir_list)}"
         self.data_dir = args.data_dir
         args.data_dir = os.path.join(os.path.dirname(__file__), "../../", args.data_dir)
         self.train_file = os.path.join(args.data_dir, "train.json")
@@ -41,7 +42,11 @@ class BaseConfig(object):
         if self.gpu_ids[0] == '-1':
             self.device = torch.device("cpu")
         else:
-            self.device = torch.device(f"cuda:{int(self.gpu_ids[0])}")
+            # M1 and mps 可用
+            if platform.system() == "Darwin" and torch.backends.mps.is_built():
+                self.device = torch.device("mps")
+            elif platform.system() == "Linux":
+                self.device = torch.device(f"cuda:{int(self.gpu_ids[0])}")
         # self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')  # 设备
         self.dropout = args.dropout
         self.seed = args.seed

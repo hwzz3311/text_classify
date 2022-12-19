@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader
 
 from src.models.config import BaseConfig
 from src.options import RunArgs
-from src.processors import build_dataset, dataset_collate_fn
+from src.processors import build_dataset, dataset_collate_fn, load_jsonl, build_iter_bertatt
 from src.train_eval import train, test
 from src.utils.model_utils import set_seed, init_network, get_vocab
 
@@ -42,19 +42,26 @@ if __name__ == "__main__":
     if config.do_train:
         #  only train
         # 加载数据
-        train_dataset = build_dataset(config, config.train_file)
-        train_iterator = DataLoader(dataset=train_dataset,
-                                    batch_size=config.batch_size,
-                                    shuffle=config.shuffle,
-                                    collate_fn=lambda x: dataset_collate_fn(config, x))
+        if config.model_name =="BertAtt":
+            train_dataset = load_jsonl(path=config.train_file)
+            train_iterator = build_iter_bertatt(train_dataset,config.bert_model, config=config)
+            dev_dataset = load_jsonl(path=config.eval_file)
+            dev_iterator = build_iter_bertatt(dev_dataset,config.bert_model, config=config)
+            train(config, model, train_iterator, dev_iterator)
+        else:
+            train_dataset = build_dataset(config, config.train_file)
+            train_iterator = DataLoader(dataset=train_dataset,
+                                        batch_size=config.batch_size,
+                                        shuffle=config.shuffle,
+                                        collate_fn=lambda x: dataset_collate_fn(config, x))
 
-        dev_dataset = build_dataset(config, config.eval_file)
-        dev_iterator = DataLoader(dataset=dev_dataset,
-                                    batch_size=config.batch_size,
-                                    shuffle=config.shuffle,
-                                    collate_fn=lambda x: dataset_collate_fn(config, x))
+            dev_dataset = build_dataset(config, config.eval_file)
+            dev_iterator = DataLoader(dataset=dev_dataset,
+                                      batch_size=config.batch_size,
+                                      shuffle=config.shuffle,
+                                      collate_fn=lambda x: dataset_collate_fn(config, x))
 
-        train(config, model, train_iterator, dev_iterator)
+            train(config, model, train_iterator, dev_iterator)
     if config.do_test:
         test_dataset = build_dataset(config, config.test_file)
         # do test

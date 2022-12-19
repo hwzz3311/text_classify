@@ -36,6 +36,7 @@ class Model(nn.Module):
         else:
             self.bert: BertModel = AutoModel.from_pretrained(config.bert_type)
         for param in self.bert.parameters():
+            # 冻结bert
             param.requires_grad = True
         self.dropout = nn.Dropout(config.dropout)
         self.fc = nn.Linear(config.hidden_size, config.num_classes)

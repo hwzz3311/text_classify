@@ -28,6 +28,13 @@ logging.basicConfig(format="%(asctime)s - %(levelname)s - %(name)s - %(message)s
                     level=logging.INFO)
 
 args = RunArgs().get_parser()
+# runargs = RunArgs()
+# parser = runargs.parser()
+# parser = runargs.initialize(parser)
+#
+# args = parser.parse_args(
+#     ["--model", "Bert", "--data_dir", "assets/data/topic_en_greenwashing/", "--gpu_ids", "1", "--bert_type",
+#      "nbroad/ESG-BER"])
 
 logger.info(args.__dict__)
 mode_name = args.model
@@ -144,7 +151,10 @@ def shap_predict_fun(datas, device=config.device, tokenizer=config.tokenizer, pa
 
 app = Flask(__name__)
 
-masker = shap.maskers.Text(r".")
+if "topic_en_" in str(config.data_dir):
+    masker = shap.maskers.Text(r" ")
+else:
+    masker = shap.maskers.Text(r".")
 
 explainer = shap.Explainer(shap_predict_fun, masker, output_names=config.class_list)
 
@@ -242,4 +252,4 @@ def text_classify_predict():
 
 if __name__ == '__main__':
     # app.run(host="0.0.0.0",port="5005",debug=True)
-    app.run(host="0.0.0.0", port="5000", debug=True)
+    app.run(host="0.0.0.0", port="5005", debug=True)

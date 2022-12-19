@@ -2,14 +2,17 @@ import ast
 import json
 import os.path
 import random
+import re
 from typing import List, Tuple
 
 import numpy as np
+import regex
 import torch
+from torch import nn
 from torch.utils import data
 from torch.utils.data import Dataset
 from tqdm import tqdm
-from transformers import DataProcessor, InputExample
+from transformers import DataProcessor, InputExample, BertModel
 import pickle as pkl
 
 from src.models.Bert import Config
@@ -356,3 +359,140 @@ def out_predict_dataset(predict_all_list, config: BaseConfig):
 #         batch_size = config.batch_size
 #     iterator = DatasetIter(config, dataset, batch_size, config.device)
 #     return iterator
+
+class DatasetIterBertAtt:
+    def __init__(self, dataset, batch_size, device, model_name, pad_size, bert_model, dropout, class_list, tokenizer):
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.n_batches = len(dataset) // batch_size
+        self.device = device
+        self.model_name = model_name
+        self.pad_size = pad_size
+        self.bert_model = bert_model
+        self.dropout = dropout
+        self.index = 0
+        self.out = 0
+        self.residue = False
+        if len(dataset) % self.n_batches != 0:
+            self.residue = True
+        self.config_classes = class_list
+        self.config_tokenizer = tokenizer
+
+    def cut_sent(self, para):
+        patterns = ['([。;；！？\?])([^”’])', '(\.{6})([^”’])', '(\…{2})([^”’])', '([。！？\?][”’])([^，。！？\?])']
+
+        if all([regex.search(p, para) is None for p in patterns]):
+            para = para + '.'
+        para = re.sub('([。;；！？\?])([^”’])', r"\1\n\2", para)  # 单字符断句符
+        para = re.sub('(\.{6})([^”’])', r"\1\n\2", para)  # 英文省略号
+        para = re.sub('(\…{2})([^”’])', r"\1\n\2", para)  # 中文省略号
+        para = re.sub('([。！？\?][”’])([^，。！？\?])', r'\1\n\2', para)
+        # 如果双引号前有终止符，那么双引号才是句子的终点，把分句符\n放到双引号后，注意前面的几句都小心保留了双引号
+        para = para.rstrip()  # 段尾如果有多余的\n就去掉它
+        # 破折号、英文双引号等忽略，需要的再做些简单调整即可。
+        sents = para.split("\n")
+        sents = [s.strip() for s in sents]
+        sents = [s for s in sents if s]
+        return sents
+
+    def be_bert_deal(self, dataset, class_list, tokenizer):
+        # hl = md5()  # TODO SHL --md5
+        # print('长度', len(dataset))
+        token_dict = {}
+        out = []
+        labels = []
+        for index, line in tqdm(enumerate(dataset), total=len(dataset)):
+            context = line['text']
+            label = line['label']
+            label = class_list.index(label)
+            sents = self.cut_sent(context)  # 对句子进行分句
+            for sent in sents:
+                # if md5(sent) not in token_dict.keys():
+                # if sent not in token_dict.keys():
+
+                    token = tokenizer.tokenize(sent)
+                    token = [CLS] + token
+                    seq_len = len(token)
+                    token_ids = tokenizer.convert_tokens_to_ids(token)
+                    mask = []
+                    if self.pad_size:
+                        if seq_len < self.pad_size:
+                            mask = [1] * len(token_ids) + [0] * (self.pad_size - len(token))
+                            mask = torch.LongTensor(mask).to(self.device)
+                            token_ids += ([0] * (self.pad_size - len(token)))
+                            token_ids = torch.LongTensor(token_ids).to(self.device)
+                            seq_len = torch.LongTensor(seq_len).to(self.device)
+                        else:
+                            mask = [1] * self.pad_size
+                            mask = torch.LongTensor(mask).to(self.device)
+                            token_ids = token_ids[:self.pad_size]
+                            token_ids = torch.LongTensor(token_ids).to(self.device)
+                            seq_len = torch.LongTensor(self.pad_size).to(self.device)
+
+                    # token_dict[md5(sent)] =
+                    res = self.bert_model(token_ids.unsqueeze(0), attention_mask=mask.unsqueeze(0))
+                    drop_data = nn.Dropout(self.dropout).to(self.device)
+                    out_bert = drop_data(res.get('last_hidden_state')).to(self.device)
+                    # contents.append((token_ids, label, seq_len, mask, out_bert))
+                    # token_dict[sent] = (token_ids, label, seq_len, mask, out_bert)  # 字典中保存相应的结果，
+                    self.out += out_bert
+                # else:
+                #     res_dict = token_dict[sent]
+                #     out_bert = res_dict[4]
+                #     self.out += out_bert
+            out_1 = self.out
+            out.append(out_1)
+            labels.append(label)
+            self.out = 0
+        labels = torch.LongTensor(labels).to(self.device)
+        return out, labels
+
+    def __next__(self):
+        if self.residue and self.index == self.n_batches:
+            batches = self.dataset[self.index * self.batch_size: len(self.dataset)]
+            self.index += 1
+            batches = self.be_bert_deal(dataset=batches, class_list=self.config_classes,
+                                        tokenizer=self.config_tokenizer)
+            return batches
+
+        elif self.index >= self.n_batches:
+            self.index = 0
+            raise StopIteration
+        else:
+            batches = self.dataset[self.index * self.batch_size: (self.index + 1) * self.batch_size]
+            self.index += 1
+            batches = self.be_bert_deal(dataset=batches, class_list=self.config_classes,
+                                        tokenizer=self.config_tokenizer)
+            return batches
+
+    def __iter__(self):
+        return self
+
+    def __len__(self):
+        if self.residue:
+            return self.n_batches + 1
+        else:
+            return self.n_batches
+
+
+
+def build_iter_bertatt(dataset: list,bert_model: BertModel, config: Config):
+    iter_data = DatasetIterBertAtt(dataset,
+                                   config.batch_size,
+                                   config.device,
+                                   config.model_name,
+                                   config.pad_size,
+                                   bert_model,
+                                   config.dropout,
+                                   config.class_list,
+                                   config.tokenizer)
+    return iter_data
+
+
+def load_jsonl(path):
+    res = []
+    with open(path, 'r', encoding='utf-8') as f:
+        for line in tqdm(f):
+            line = ast.literal_eval(line)
+            res.append(line)
+    return res
