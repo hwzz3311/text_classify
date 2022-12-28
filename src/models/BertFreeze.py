@@ -25,6 +25,7 @@ class Config(BaseConfig):
             self.tokenizer = AutoTokenizer.from_pretrained(self.bert_type)
         self.hidden_size = 1024 if "large" in str(self.bert_dir).lower() \
                                    or "large" in str(self.bert_type).lower() else 768
+        self.unfreeze_layers = ['layer.9', 'layer.10', 'layer.11', 'pooler.']
 
 
 class Model(nn.Module):
@@ -35,8 +36,14 @@ class Model(nn.Module):
             self.bert: BertModel = AutoModel.from_pretrained(config.bert_dir)
         else:
             self.bert: BertModel = AutoModel.from_pretrained(config.bert_type)
-        for param in self.bert.parameters():
-            param.requires_grad = True
+        for name, param in self.bert.named_parameters():
+            param.requires_grad = False
+            for ele in config.unfreeze_layers:
+                if ele in name:
+                    param.requires_grad = True
+                    break
+        # for param in self.bert.parameters():
+        #     param.requires_grad = True
         self.dropout = nn.Dropout(config.dropout)
         self.fc = nn.Linear(config.hidden_size, config.num_classes)
 

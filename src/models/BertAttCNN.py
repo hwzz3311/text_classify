@@ -1,7 +1,9 @@
 # coding: UTF-8
 import argparse
 import os
+import types
 
+import numpy
 from transformers import AutoTokenizer, AutoModel, AutoConfig, BertModel
 import torch
 import torch.nn as nn
@@ -12,6 +14,7 @@ import math
 
 # 定义配置文件
 from src.models.config import BaseConfig
+from src.models.plugs import add_cnn, conv_and_pool
 
 
 class Config(BaseConfig):
@@ -31,6 +34,8 @@ class Config(BaseConfig):
                                    or "large" in str(self.bert_type).lower() else 768
         self.head = 8
         self.embedding = self.hidden_size
+        self.filter_sizes = (2, 3, 4)  # 卷积核尺寸
+        self.num_filters = 256
 
 
 # 定义多头自注意力机制的类
@@ -82,7 +87,59 @@ class Config(BaseConfig):
 #         """
 #         return nn.ModuleList([copy.deepcopy(module) for _ in range(N)])
 
+class MultiHeadedAttention(nn.Module):
+    """Multi-Head Attention layer
 
+    :param int n_head: the number of head s
+    :param int n_feat: the number of features
+    :param float dropout_rate: dropout rate
+    """
+
+    def __init__(self, n_head, n_feat, dropout_rate):
+        super(MultiHeadedAttention, self).__init__()
+        assert n_feat % n_head == 0
+        # We assume d_v always equals d_k
+        self.d_k = n_feat // n_head
+        self.h = n_head
+        self.linear_q = nn.Linear(n_feat, n_feat)
+        self.linear_k = nn.Linear(n_feat, n_feat)
+        self.linear_v = nn.Linear(n_feat, n_feat)
+        self.linear_out = nn.Linear(n_feat, n_feat)
+        self.attn = None
+        self.dropout = nn.Dropout(p=dropout_rate)
+
+    def forward(self, query, key, value, mask=None):
+        """Compute 'Scaled Dot Product Attention'
+
+        :param torch.Tensor query: (batch, time1, size)
+        :param torch.Tensor key: (batch, time2, size)
+        :param torch.Tensor value: (batch, time2, size)
+        :param torch.Tensor mask: (batch, time1, time2)
+        :param torch.nn.Dropout dropout:
+        :return torch.Tensor: attentined and transformed `value` (batch, time1, d_model)
+             weighted by the query dot key attention (batch, head, time1, time2)
+        """
+        n_batch = query.size(0)
+        q = self.linear_q(query).view(n_batch, -1, self.h, self.d_k)
+        k = self.linear_k(key).view(n_batch, -1, self.h, self.d_k)
+        v = self.linear_v(value).view(n_batch, -1, self.h, self.d_k)
+        q = q.transpose(1, 2)  # (batch, head, time1, d_k)
+        k = k.transpose(1, 2)  # (batch, head, time2, d_k)
+        v = v.transpose(1, 2)  # (batch, head, time2, d_k)
+
+        scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.d_k)  # (batch, head, time1, time2)
+        if mask is not None:
+            mask = mask.unsqueeze(1).eq(0)  # (batch, 1, time1, time2)
+            min_value = float(numpy.finfo(torch.tensor(0, dtype=scores.dtype).numpy().dtype).min)
+            scores = scores.masked_fill(mask, min_value)
+            self.attn = torch.softmax(scores, dim=-1).masked_fill(mask, 0.0)  # (batch, head, time1, time2)
+        else:
+            self.attn = torch.softmax(scores, dim=-1)  # (batch, head, time1, time2)
+
+        p_attn = self.dropout(self.attn)
+        x = torch.matmul(p_attn, v)  # (batch, head, time1, d_k)
+        x = x.transpose(1, 2).contiguous().view(n_batch, -1, self.h * self.d_k)  # (batch, time1, d_model)
+        return self.linear_out(x)
 
 
 class Model(nn.Module):
@@ -102,29 +159,25 @@ class Model(nn.Module):
         #     for name, param in self.bert.named_parameters():
         #         param.requires_grad = True
         # self.tokenizer = config.tokenizer
-        self.dropout = nn.Dropout(config.dropout)
-        # self.attn = MultiHeadedAttention(head=config.head, embedding_dim=config.embedding, dropout=config.dropout)
-        from src.models.BertAttRNN import MultiHeadedAttention
         self.attn = MultiHeadedAttention(config.head, config.embedding, config.dropout)
-        self.fc_01 = nn.Linear(config.hidden_size, int(config.hidden_size / 2))
-        self.fc_02 = nn.Linear(int(config.hidden_size / 2), config.num_classes)
+        self.cnn = types.MethodType(add_cnn, self)
+        self.cnn(config)
+        self.conv_and_pool = types.MethodType(conv_and_pool, self)
 
     def forward(self, x):
         out = x  # 1，256，768
         out_all = None
         for i in out:
             p_attn = self.attn(i, i, i)
-            # print('111111', p_attn.shape)
-            # 第三步经过第一个全连接层
-            out_fc = self.fc_01(p_attn)  # [32, 256, 2]
-            # 第四步经过第二个全连接层
-            out_fc = self.fc_02(out_fc)
-            out_attn = out_fc[:, 0]  # [32, 2]
+            p_attn = torch.unsqueeze(p_attn, dim=1)
+            conv_out = torch.cat([self.conv_and_pool(p_attn, conv) for conv in self.convs], 1)
+            drop_out = self.dropout(conv_out)
+            fc_out = self.fc(drop_out)
 
             if out_all is None:
-                out_all = out_attn
+                out_all = fc_out
             else:
-                out_all = torch.cat([out_all, out_attn], 0)
+                out_all = torch.cat([out_all, fc_out], 0)
 
         return out_all
 

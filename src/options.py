@@ -17,9 +17,11 @@ class BaseArgs(object):
 
         parser.add_argument("--do_train", default=False, type=bool, help="do train ?")
         parser.add_argument("--do_dev", default=True, type=bool)
-        parser.add_argument("--do_test", default=True, type=bool)
+        parser.add_argument("--do_test", default=False, type=bool)
+        parser.add_argument("--do_predict_news", default=False, type=bool)
 
         parser.add_argument("--test_file", default=None, type=str, help="do test file path!")
+        parser.add_argument("--predict_file", default=None, type=str, help="do test file path!")
 
         parser.add_argument("--pad_size", default=512, type=int)
 
@@ -41,6 +43,9 @@ class BaseArgs(object):
         parser.add_argument("--loss", type=str, default="cross_entropy", help="loss function",
                             choices=["cross_entropy", "soft_bootstrapping_loss", "hard_bootstrapping_loss"], )
         parser.add_argument("--loss_beta", type=float, help="loss beta")
+        parser.add_argument("--cut_sen_len", type=int, default=2, help="predict 模型下 将新闻content划分的成句子，每句的长度")
+        parser.add_argument("--threshold", type=float, default=0.5, help="test / predict模型下的阈值，默认0.5")
+        parser.add_argument("--gen_bert_emb_file", type=bool, default=True, help="重新生成gen_bert_emb_file 可以加快训练速度")
 
         return parser
 
@@ -67,6 +72,7 @@ class RunArgs(BaseArgs):
 
         # parser.add_argument('--eval_model', default=False, help='whether to eval models after training')
         parser.add_argument("--require_improvement", default=2000, type=int, help="end training early")
+        parser.add_argument("--MOE_model", default=False, type=bool, help="使用MOE模式划分出的小模型去加载模型结构")
 
         return parser
 

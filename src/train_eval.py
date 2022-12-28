@@ -9,6 +9,7 @@ from sklearn import metrics
 from torch import nn
 from torch.optim import AdamW, Adam
 from torch.nn import functional as F
+from tqdm import tqdm
 
 from src.bootstrapping_loss.loss import SoftBootstrappingLoss, HardBootstrappingLoss
 
@@ -18,7 +19,7 @@ from torch.utils.tensorboard import SummaryWriter
 from transformers import get_linear_schedule_with_warmup
 
 from src.models.config import BaseConfig
-from src.processors import out_predict_dataset
+from src.processors import out_predict_dataset, out_test_dataset
 from src.utils.model_utils import get_time_dif
 
 
@@ -33,6 +34,21 @@ def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
             {"params": [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)], "weight_decay": 0.01},
             {"params": [p for n, p in param_optimizer if any(nd in n for nd in no_decay)], "weight_decay": 0.0}
         ]
+        if "bertfreeze" in str(config.model_name).lower():
+            decay = ['layer.9', 'layer.10', 'layer.11', 'pooler.']
+            optimizer_grouped_parameters = [
+                {"params": [p for n, p in param_optimizer if any(nd in n for nd in decay)],
+                 "weight_decay": 0.01},
+                {"params": [p for n, p in param_optimizer if not any(nd in n for nd in decay)], "weight_decay": 0.0}
+            ]
+        if "bertfreezernnauto" in str(config.model_name).lower():
+            decay = []
+            optimizer_grouped_parameters = [
+                {"params": [p for n, p in param_optimizer if any(nd in n for nd in decay)],
+                 "weight_decay": 0.01},
+                {"params": [p for n, p in param_optimizer if not any(nd in n for nd in decay)], "weight_decay": 0.0}
+            ]
+
         optimizer = AdamW(optimizer_grouped_parameters, lr=config.lr)
     else:
         # optimizer = Adam(model.parameters(),
@@ -63,6 +79,19 @@ def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
     for epoch in range(config.num_epochs):
         print('Epoch [{}/{}]'.format(epoch + 1, config.num_epochs))
         print(f"time_dif : {get_time_dif(start_time)}")
+        if "bertfreezernnauto" in str(config.model_name).lower() and epoch == 9:
+            print(f"开始微调bert ;scheduler.lr : {scheduler.get_lr()} config.lr : {config.lr}")
+
+            model.update_bert()
+            decay = config.unfreeze_layers
+            optimizer_grouped_parameters = [
+                {"params": [p for n, p in param_optimizer if any(nd in n for nd in decay)],
+                 "weight_decay": 0.01},
+                {"params": [p for n, p in param_optimizer if not any(nd in n for nd in decay)], "weight_decay": 0.0}
+            ]
+            optimizer = AdamW(optimizer_grouped_parameters, lr=config.lr)
+            scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9)
+
         for i, _data in enumerate(train_iter):
             optimizer.zero_grad()
             trains, labels = _data[0], _data[1]
@@ -113,12 +142,6 @@ def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
 
 
 def test(config: BaseConfig, model: nn.Module, data_iter):
-    # 加载模型
-    if config.check_point_path is not None and len(config.check_point_path) and config.do_train is False:
-        assert os.path.exists(config.check_point_path), "check point file not find !"
-        model.load_state_dict(torch.load(config.check_point_path))
-    else:
-        model.load_state_dict(torch.load(config.save_path))
     model.eval()
     start_time = time.time()
     test_acc, test_loss, test_report, test_confusion = evaluate(config, model, data_iter, test_mode=True)
@@ -129,15 +152,67 @@ def test(config: BaseConfig, model: nn.Module, data_iter):
     print(f"Used time: {get_time_dif(start_time)}")
 
 
-def evaluate(config: BaseConfig, model: nn.Module, data_iter, test_mode=False):
+def predict_batch(config: BaseConfig, model: nn.Module, data_iter):
+    # 加载模型
+    # if config.check_point_path is not None and len(config.check_point_path) and config.do_train is False:
+    #     assert os.path.exists(config.check_point_path), "check point file not find !"
+    #     model.load_state_dict(torch.load(config.check_point_path))
+    # else:
+    #     model.load_state_dict(torch.load(config.save_path))
+    model.eval()
+    start_time = time.time()
+    news_ids_all = []
+    input_tokens_all = []
+    predict_result_all = []
+    softmax_fun = torch.nn.Softmax(dim=1)
+    with torch.no_grad():
+        for i, _data in tqdm(enumerate(data_iter), total=len(data_iter), desc="predict_batch ing"):
+            trains, labels, news_ids = _data[0], _data[1], _data[2]
+            if str(config.model_name).startswith("BertAtt"):
+                input_tokens = _data[3]
+            else:
+                input_tokens = trains[0]
+            outputs = model(trains)
+            try:
+                predict_result = torch.max(outputs.data, dim=1)[1].cpu()
+            except:
+                outputs = torch.unsqueeze(outputs, 0)
+                predict_result = torch.max(outputs.data, dim=1)[1].cpu()
 
+            softmax_output = softmax_fun(outputs)
+            outputs = softmax_output
+            predict = torch.where(outputs > config.threshold, torch.ones_like(outputs), torch.zeros_like(outputs))
+            predict_results = []
+
+            for predict_result in predict.cpu().numpy().tolist():
+                predict_results.append(config.class_list[np.argmax(predict_result)])
+            news_ids_all.extend(news_ids)
+            # 保存token id，在后续的结果中进行还原
+            if str(config.model_name).startswith("BertAtt"):
+                input_tokens_all.extend(input_tokens)
+            else:
+                input_tokens_all.extend(input_tokens.data.cpu().numpy().tolist())
+            predict_result_all.extend(predict_results)
+            print(
+                f"len news_ids_all : {len(news_ids_all)}, input_tokens_all : {len(input_tokens_all)}, predict_result_all : {len(predict_result_all)},")
+
+    out_predict_dataset(predict_result_all, news_ids_all, input_tokens_all, config)
+
+    print(f"Used time: {get_time_dif(start_time)}")
+
+
+def evaluate(config: BaseConfig, model: nn.Module, data_iter, test_mode=False, predict_mode=False):
     model.eval()
     loss_total = 0
     predict_all = np.array([], dtype="int")
     labels_all = np.array([], dtype="int")
+    news_ids_all = []
+    input_tokens_all = []
     with torch.no_grad():
-        for texts, labels in data_iter:
-            outputs = model(texts)
+        for i, _data in enumerate(data_iter):
+            trains, labels, news_ids = _data[0], _data[1], _data[2]
+            input_tokens = trains[0]
+            outputs = model(trains)
             # print(f"evaluate - outputs : {outputs.shape} , labels : {labels.shape}")
             try:
                 loss = F.cross_entropy(outputs, labels, label_smoothing=label_smoothing)
@@ -149,7 +224,11 @@ def evaluate(config: BaseConfig, model: nn.Module, data_iter, test_mode=False):
             predict = torch.max(outputs.data, dim=1)[1].cpu().numpy()
             labels_all = np.append(labels_all, labels)
             predict_all = np.append(predict_all, predict)
-    acc = metrics.accuracy_score(labels_all, predict_all)
+            # news_ids_all = news_ids_all.append(news_ids)
+            # 保存token id，在后续的结果中进行还原
+            # input_tokens_all = input_tokens_all.append(input_tokens.data.cpu().numpy().tolist())
+    if not predict_mode:
+        acc = metrics.accuracy_score(labels_all, predict_all)
     if test_mode:
         report = None
         confusion = None
@@ -162,6 +241,9 @@ def evaluate(config: BaseConfig, model: nn.Module, data_iter, test_mode=False):
             pass
         # 将预测结果写到文件
         predict_all_list = predict_all.tolist()
-        out_predict_dataset(predict_all_list, config)
+        out_test_dataset(predict_all_list, config)
         return acc, loss_total / len(data_iter), report, confusion
+    if predict_mode:
+        predict_all_list = predict_all.tolist()
+        return predict_all_list, news_ids_all, input_tokens_all
     return acc, loss_total / len(data_iter)

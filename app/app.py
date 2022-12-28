@@ -16,9 +16,10 @@ from importlib import import_module
 
 from markupsafe import Markup
 
+from src.compression.moefication.utils import bert_change_forward
 from src.models import FastText
 from src.options import RunArgs
-from src.processors import build_by_sentence, CLS
+from src.processors import build_by_sentence, CLS, be_bert_deal_by_sentecese
 from src.utils.model_utils import set_seed, get_vocab, init_network, build_vocab
 from src.utils.shap_plots_text import text as shap_plots_text
 
@@ -50,7 +51,7 @@ vocab = get_vocab(config, use_word=False)
 config.n_vocab = len(vocab)
 
 model: FastText.Model = x.Model(config)
-model.to(config.device)
+
 if config.model_name != "Transformer" and "bert" not in config.model_name.lower():
     init_network(model)
 
@@ -60,9 +61,17 @@ assert os.path.exists(args.check_point_path), "check point file not find !"
 config.save_path = args.check_point_path
 if config.device.type == "cpu":
     model.load_state_dict(torch.load(config.save_path, map_location="cpu"))
-    # model = model.module
 else:
     model.load_state_dict(torch.load(config.save_path))
+if config.MOE_model:
+    bert_type = config.bert_type
+    if "/" in config.bert_type:
+        bert_type = config.bert_type.split("/")[1]
+    param_split_dir = os.path.join(os.path.dirname(__file__), "../", config.data_dir, f"saved_dict/{config.model_name}/MOE/{bert_type}")
+    assert os.path.exists(param_split_dir), "MOE model file not found"
+    bert_change_forward(model, param_split_dir, config.device, 20)
+
+model.to(config.device)
 model.eval()
 print('"bert" in config.model_name.lower() ： ', "bert" in config.model_name.lower())
 logger.info(config.__dict__)
@@ -168,7 +177,7 @@ def hi():
              "parameter": {
                  "content": "str"
              },
-             "result": {
+             "MOE": {
                  "type": "json",
                  "parameter": {
                      "content": "str",
@@ -207,10 +216,15 @@ def shap_analysis():
 def text_classify_predict():
     query = request.get_json()
     content = query['content']
-    threshold = query.get('threshold', 0.5)
+    threshold = query.get('threshold', 0.7)
+    threshold = 0.7
     sentences = [content]
-    test_data = build_by_sentence(config, sentences, vocab, 0, config.pad_size)
-    test_data = _to_tensor(config, test_data)
+
+    if "BertAtt" in config.model_name:
+        test_data = be_bert_deal_by_sentecese(content, config=config)
+    else:
+        test_data = build_by_sentence(config, sentences, vocab, 0, config.pad_size)
+        test_data = _to_tensor(config, test_data)
     sigmoid_output_list = [-1, -1]
     with torch.no_grad():
         outputs = model(test_data)
@@ -252,4 +266,4 @@ def text_classify_predict():
 
 if __name__ == '__main__':
     # app.run(host="0.0.0.0",port="5005",debug=True)
-    app.run(host="0.0.0.0", port="5005", debug=True)
+    app.run(host="0.0.0.0", port="5555", debug=False)

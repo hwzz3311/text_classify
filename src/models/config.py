@@ -23,6 +23,8 @@ class BaseConfig(object):
         self.eval_file = os.path.join(args.data_dir, "eval.json")
         self.test_file = args.test_file if args.test_file is not None and len(args.test_file) and\
                                            os.path.exists(args.test_file) else os.path.join(args.data_dir, "test.json")
+        self.predict_file = args.predict_file if args.predict_file is not None and len(args.predict_file) and\
+                                           os.path.exists(args.predict_file) else os.path.join(args.data_dir, "predict.json")
         self.class_list = [x.strip() for x in open(os.path.join(args.data_dir, "labels.txt")).readlines()]
         self.class_ids = [i for i in range(len(self.class_list))]
         self.vocab_path = os.path.join(args.data_dir, "vocab.pkl")
@@ -72,9 +74,16 @@ class BaseConfig(object):
         self.do_train = args.do_train
         self.do_dev = args.do_dev
         self.do_test = args.do_test
+        self.do_predict_news = args.do_predict_news
+
 
         # self.eval_model_dir = args.eval_model_dir if hasattr(args, "eval_model_dir") else None
         # self.test_model_dir = args.test_model_dir if hasattr(args, "test_model_dir") else None
         self.predict_out_dir = args.predict_out_dir if hasattr(args, "predict_out_dir") else args.data_dir
+
+        self.MOE_model = args.MOE_model
+        self.cut_sen_len = args.cut_sen_len
+        self.threshold = args.threshold
+        self.gen_bert_emb_file = args.gen_bert_emb_file
 
 

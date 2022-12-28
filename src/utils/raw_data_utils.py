@@ -179,8 +179,8 @@ if __name__ == "__main__":
     # sentences = re.split("([?？\n!！。])", "".join(contents))
     # sentences.append("")
     # sentences = ["".join(i) for i in zip(sentences[0::2], sentences[1::2])]
-    # result = get_smooth_sentences(sentences)
-    # print(result)
+    # MOE = get_smooth_sentences(sentences)
+    # print(MOE)
     content = load_content("../../tests/tmp_file/601003:柳钢股份2020年年度报告.txt")
     result = get_main_business(content)
     for paragraph in result:
@@ -195,4 +195,4 @@ if __name__ == "__main__":
         sentences = ["".join(i) for i in zip(paragraph[0::1], paragraph[1::1])]
         print("\n".join(sentences))
         print("*" * 20)
-    # print(result)
+    # print(MOE)
