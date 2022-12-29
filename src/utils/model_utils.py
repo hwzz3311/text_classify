@@ -157,6 +157,18 @@ def modelsize(model, input, type_size=4):
     print('Model {} : intermedite variables: {:3f} M (with backward)'
           .format(model._get_name(), total_nums * type_size*2 / 1000 / 1000))
 
+def split_model_layer(model_file_path, save_folder):
+    model = torch.load(model_file_path, map_location='cpu')
+
+    if not os.path.exists(save_folder):
+        os.makedirs(save_folder)
+
+    for file_index, layer_name in tqdm(enumerate(model.keys()), total=len(model.keys()), desc="split_model_layer ing"):
+        ffn_weight = model[layer_name].numpy()
+        filename = os.path.join(save_folder, f"{layer_name}")
+        torch.save(ffn_weight, filename)
+    print(f"model layer split save to {save_folder}.")
+
 
 if __name__ == "__main__":
     pass

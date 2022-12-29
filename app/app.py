@@ -217,7 +217,7 @@ def text_classify_predict():
     query = request.get_json()
     content = query['content']
     threshold = query.get('threshold', 0.7)
-    threshold = 0.7
+    threshold = 0.5
     sentences = [content]
 
     if "BertAtt" in config.model_name:

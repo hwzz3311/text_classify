@@ -40,6 +40,7 @@ if __name__ == "__main__":
     if config.check_point_path is not None and len(config.check_point_path):
         assert os.path.exists(config.check_point_path), "check point file not find !"
         model.load_state_dict(torch.load(config.check_point_path))
+    model.to(config.device)
     if config.do_train:
         #  only train
         # 加载数据

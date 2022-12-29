@@ -71,9 +71,10 @@ def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
         loss_func = SoftBootstrappingLoss(beta=0.95, as_pseudo_label=True)
     elif config.loss_fun == "hard_bootstrapping_loss":
         loss_func = HardBootstrappingLoss(beta=0.8)
-
-
-    writer = SummaryWriter(log_dir=config.log_path + '/' + time.strftime('%m-%d_%H.%M', time.localtime()))
+    print("next(model.parameters()).is_cuda", next(model.parameters()).is_cuda)
+    log_path = config.log_path + '/' + time.strftime('%m-%d_%H.%M', time.localtime())
+    writer = SummaryWriter(log_dir=log_path)
+    print("*" * 20, f"log_path : {log_path}", "*" * 20)
     os.makedirs(os.path.dirname(config.save_path), exist_ok=True)
     print(f"train_iter length:{len(train_iter)}")
     for epoch in range(config.num_epochs):
@@ -193,8 +194,8 @@ def predict_batch(config: BaseConfig, model: nn.Module, data_iter):
             else:
                 input_tokens_all.extend(input_tokens.data.cpu().numpy().tolist())
             predict_result_all.extend(predict_results)
-            print(
-                f"len news_ids_all : {len(news_ids_all)}, input_tokens_all : {len(input_tokens_all)}, predict_result_all : {len(predict_result_all)},")
+            # print(
+            #     f"len news_ids_all : {len(news_ids_all)}, input_tokens_all : {len(input_tokens_all)}, predict_result_all : {len(predict_result_all)},")
 
     out_predict_dataset(predict_result_all, news_ids_all, input_tokens_all, config)
 

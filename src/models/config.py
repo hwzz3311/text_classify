@@ -37,6 +37,9 @@ class BaseConfig(object):
         else:
             checkpoint_file_name = f"saved_dict/{self.model_name}.cpkt"
             log_dir = f"{self.model_name}/"
+        self.save_model_name = args.save_model_name
+        if self.save_model_name:
+            checkpoint_file_name = f"saved_dict/{self.model_name}/{self.save_model_name}.cpkt"
         self.save_path = os.path.join(args.data_dir, checkpoint_file_name)
         self.log_path = os.path.join(args.data_dir, log_dir)
         self.gpu_ids = str(args.gpu_ids).split(",")
@@ -75,6 +78,8 @@ class BaseConfig(object):
         self.do_dev = args.do_dev
         self.do_test = args.do_test
         self.do_predict_news = args.do_predict_news
+        self.bert_layer_nums = args.bert_layer_nums
+        self.bert_split_dir = args.bert_split_dir
 
 
         # self.eval_model_dir = args.eval_model_dir if hasattr(args, "eval_model_dir") else None

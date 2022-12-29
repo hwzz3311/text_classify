@@ -46,6 +46,9 @@ class BaseArgs(object):
         parser.add_argument("--cut_sen_len", type=int, default=2, help="predict 模型下 将新闻content划分的成句子，每句的长度")
         parser.add_argument("--threshold", type=float, default=0.5, help="test / predict模型下的阈值，默认0.5")
         parser.add_argument("--gen_bert_emb_file", type=bool, default=True, help="重新生成gen_bert_emb_file 可以加快训练速度")
+        parser.add_argument("--bert_layer_nums", type=int, default=10, help="保留多少层的bert")
+        parser.add_argument("--bert_split_dir", default=None, help="被分层的bert模型 存储位置")
+        parser.add_argument("--save_model_name", default=None, help="被保存模型的名字")
 
         return parser
 
