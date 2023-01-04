@@ -54,7 +54,9 @@ class Config(BaseConfig):
         print(f"mybert to device: {self.device}")
         for param in mybert.parameters():
             param.requires_grad = False
+        mybert.eval()
         print("next(mybert.parameters()).is_cuda : ", next(mybert.parameters()).is_cuda)
+
 
 class Model(nn.Module):
 
@@ -66,7 +68,8 @@ class Model(nn.Module):
         self.dropout = nn.Dropout(config.dropout)
         self.fc = nn.Linear(config.hidden_size, config.num_classes)
         assert mybert is not None
-    def get_my_bert_res(self,x):
+
+    def get_my_bert_res(self, x):
         context = x[0]  # 输入的句子
         mask = x[2]  # 对padding部分进行mask，和句子一个size，padding部分用0表示，如：[1, 1, 1, 1, 0, 0]
         x = mybert(context, attention_mask=mask)
