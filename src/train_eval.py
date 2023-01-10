@@ -34,21 +34,6 @@ def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
             {"params": [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)], "weight_decay": 0.01},
             {"params": [p for n, p in param_optimizer if any(nd in n for nd in no_decay)], "weight_decay": 0.0}
         ]
-        if "bertfreeze" in str(config.model_name).lower():
-            decay = ['layer.9', 'layer.10', 'layer.11', 'pooler.']
-            optimizer_grouped_parameters = [
-                {"params": [p for n, p in param_optimizer if any(nd in n for nd in decay)],
-                 "weight_decay": 0.01},
-                {"params": [p for n, p in param_optimizer if not any(nd in n for nd in decay)], "weight_decay": 0.0}
-            ]
-        if "bertfreezernnauto" in str(config.model_name).lower():
-            decay = []
-            optimizer_grouped_parameters = [
-                {"params": [p for n, p in param_optimizer if any(nd in n for nd in decay)],
-                 "weight_decay": 0.01},
-                {"params": [p for n, p in param_optimizer if not any(nd in n for nd in decay)], "weight_decay": 0.0}
-            ]
-
         optimizer = AdamW(optimizer_grouped_parameters, lr=config.lr)
     else:
         # optimizer = Adam(model.parameters(),
@@ -71,28 +56,12 @@ def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
         loss_func = SoftBootstrappingLoss(beta=0.95, as_pseudo_label=True)
     elif config.loss_fun == "hard_bootstrapping_loss":
         loss_func = HardBootstrappingLoss(beta=0.8)
-    print("next(model.parameters()).is_cuda", next(model.parameters()).is_cuda)
-    log_path = config.log_path + '/' + time.strftime('%m-%d_%H.%M', time.localtime())
-    writer = SummaryWriter(log_dir=log_path)
-    print("*" * 20, f"log_path : {log_path}", "*" * 20)
+    writer = SummaryWriter(log_dir=config.log_path + '/' + time.strftime('%m-%d_%H.%M', time.localtime()))
     os.makedirs(os.path.dirname(config.save_path), exist_ok=True)
     print(f"train_iter length:{len(train_iter)}")
     for epoch in range(config.num_epochs):
         print('Epoch [{}/{}]'.format(epoch + 1, config.num_epochs))
         print(f"time_dif : {get_time_dif(start_time)}")
-        if "bertfreezernnauto" in str(config.model_name).lower() and epoch == 9:
-            print(f"开始微调bert ;scheduler.lr : {scheduler.get_lr()} config.lr : {config.lr}")
-
-            model.update_bert()
-            decay = config.unfreeze_layers
-            optimizer_grouped_parameters = [
-                {"params": [p for n, p in param_optimizer if any(nd in n for nd in decay)],
-                 "weight_decay": 0.01},
-                {"params": [p for n, p in param_optimizer if not any(nd in n for nd in decay)], "weight_decay": 0.0}
-            ]
-            optimizer = AdamW(optimizer_grouped_parameters, lr=config.lr)
-            scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9)
-
         for i, _data in enumerate(train_iter):
             optimizer.zero_grad()
             trains, labels = _data[0], _data[1]
@@ -143,6 +112,7 @@ def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
 
 
 def test(config: BaseConfig, model: nn.Module, data_iter):
+
     model.eval()
     start_time = time.time()
     test_acc, test_loss, test_report, test_confusion = evaluate(config, model, data_iter, test_mode=True)
@@ -163,16 +133,14 @@ def predict_batch(config: BaseConfig, model: nn.Module, data_iter):
     model.eval()
     start_time = time.time()
     news_ids_all = []
-    input_tokens_all = []
+    origin_text_all = []
     predict_result_all = []
+    predict_result_score_all = []
     softmax_fun = torch.nn.Softmax(dim=1)
     with torch.no_grad():
-        for i, _data in tqdm(enumerate(data_iter), total=len(data_iter), desc="predict_batch ing"):
-            trains, labels, news_ids = _data[0], _data[1], _data[2]
-            if str(config.model_name).startswith("BertAtt"):
-                input_tokens = _data[3]
-            else:
-                input_tokens = trains[0]
+        for i, _data in tqdm(enumerate(data_iter), total=len(data_iter),desc="predict_batch ing"):
+            # trains, labels, news_ids = _data[0], _data[1], _data[2]
+            trains, labels, news_ids, origin_text = _data[0], _data[1], _data[2], _data[3]
             outputs = model(trains)
             try:
                 predict_result = torch.max(outputs.data, dim=1)[1].cpu()
@@ -184,25 +152,24 @@ def predict_batch(config: BaseConfig, model: nn.Module, data_iter):
             outputs = softmax_output
             predict = torch.where(outputs > config.threshold, torch.ones_like(outputs), torch.zeros_like(outputs))
             predict_results = []
-
-            for predict_result in predict.cpu().numpy().tolist():
+            predict_result_score = []
+            softmax_output_list = softmax_output.data.cpu().numpy().tolist()
+            predict_list = predict.cpu().numpy().tolist()
+            for predict_result, softmax_output in zip(predict_list, softmax_output_list):
                 predict_results.append(config.class_list[np.argmax(predict_result)])
+                predict_result_score.append(softmax_output[np.argmax(predict_result)])
             news_ids_all.extend(news_ids)
             # 保存token id，在后续的结果中进行还原
-            if str(config.model_name).startswith("BertAtt"):
-                input_tokens_all.extend(input_tokens)
-            else:
-                input_tokens_all.extend(input_tokens.data.cpu().numpy().tolist())
+            origin_text_all.extend(origin_text)
             predict_result_all.extend(predict_results)
-            # print(
-            #     f"len news_ids_all : {len(news_ids_all)}, input_tokens_all : {len(input_tokens_all)}, predict_result_all : {len(predict_result_all)},")
+            predict_result_score_all.extend(predict_result_score)
 
-    out_predict_dataset(predict_result_all, news_ids_all, input_tokens_all, config)
+    out_predict_dataset(predict_result_all, predict_result_score_all, news_ids_all, origin_text_all, config)
 
     print(f"Used time: {get_time_dif(start_time)}")
 
-
 def evaluate(config: BaseConfig, model: nn.Module, data_iter, test_mode=False, predict_mode=False):
+
     model.eval()
     loss_total = 0
     predict_all = np.array([], dtype="int")

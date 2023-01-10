@@ -8,8 +8,20 @@
 <script src="https://code.jquery.com/jquery-1.12.4.min.js"></script>
 
 <p>
-    <textarea cols="100" rows="3" type="text" placeholder="输入测试数据" id="myInput" ></textarea>
-    <button id="button" type='button'> 发送请求</button>
+    <textarea cols="150" rows="5" type="text" placeholder="输入测试数据" id="myInput"></textarea>
+<fieldset>
+    <legend>选择对应的模型 ：</legend>
+    {% for i in models %}
+    <div>
+        <input type="radio" name="drone" value="{{i}}"
+               checked>
+        <label>{{i}}</label>
+    </div>
+    {% endfor %}
+</fieldset>
+
+<button id="button" type='button'> 发送请求</button>
+<button id="clear" type='button'> 清除记录</button>
 </p>
 
 
@@ -20,17 +32,21 @@
         $("#button").click(function (event) {
             var post_data = {}
             post_data["content"] = $("#myInput").val()
+            post_data["select_model"] = $('input:radio:checked').val();
             $.ajax({
-                 async: false,
-                 dataType: 'json',
-                 timeout: 30000,
-                 type: 'post',
+                async: false,
+                dataType: 'json',
+                timeout: 30000,
+                type: 'post',
                 url: '/shap_analysis',
-                 data: JSON.stringify(post_data),
-                 success: function (data){
-                     $("#result").append(data["shap_result"]);
+                data: JSON.stringify(post_data),
+                success: function (data) {
+                    $("#result").append("<p>" + data["select_model"] + data["shap_result"] + "</p>");
                 }
-             });
+            });
+        });
+        $("#clear").click(function (event) {
+            $("#result").empty();
         });
     });
 </script>

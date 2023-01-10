@@ -6,6 +6,7 @@ import re
 from typing import List, Tuple
 
 import numpy as np
+import pandas as pd
 import regex
 import torch
 from sklearn import metrics
@@ -18,7 +19,7 @@ import pickle as pkl
 
 from src.models.Bert import Config
 from src.models.config import BaseConfig
-from src.utils.model_utils import build_vocab
+from src.utils.model_utils import predict_res_merger, build_vocab
 
 PAD, CLS = '[PAD]', '[CLS]'  # padding符号, bert中综合信息符号
 MAX_VOCAB_SIZE = 10000
@@ -87,19 +88,21 @@ def build_by_sentence(config: Config, sentences, vocab, label, pad_size=32):
 
 
 class build_dataset(Dataset):
-    def __init__(self, config: BaseConfig, file_path, is_predict=False):
+    def __init__(self, config: BaseConfig, dataset, is_predict=False):
         self.config = config
         self.pad_size = config.pad_size
         self.is_predict = is_predict
 
-        self.data = self.load_file(file_path)
+        self.data = dataset
         self.tokenizer = lambda x: [y for y in x]  # char-level
-        if os.path.exists(config.vocab_path):
-            self.vocab = pkl.load(open(config.vocab_path, 'rb'))
-        else:
-            self.vocab = build_vocab(config.train_file, tokenizer=self.tokenizer, max_size=MAX_VOCAB_SIZE, min_freq=1)
-            pkl.dump(self.vocab, open(config.vocab_path, 'wb'))
-        print(f"Vocab size: {len(self.vocab)}")
+        if "bert" not in str(config.model_name).lower():
+            if os.path.exists(config.vocab_path):
+                self.vocab = pkl.load(open(config.vocab_path, 'rb'))
+            else:
+                self.vocab = build_vocab(config.train_file, tokenizer=self.tokenizer, max_size=MAX_VOCAB_SIZE,
+                                         min_freq=1)
+                pkl.dump(self.vocab, open(config.vocab_path, 'wb'))
+            print(f"Vocab size: {len(self.vocab)}")
 
     def biGramHash(self, sequence, t, buckets):
         t1 = sequence[t - 1] if t - 1 >= 0 else 0
@@ -109,23 +112,6 @@ class build_dataset(Dataset):
         t1 = sequence[t - 1] if t - 1 >= 0 else 0
         t2 = sequence[t - 2] if t - 2 >= 0 else 0
         return (t2 * 14918087 * 18408749 + t1 * 14918087) % buckets
-
-    def load_file(self, file_path):
-        res = []
-        with open(file_path, "r") as f:
-            for line in f:
-                line = line.strip()
-                json_data: dict = ast.literal_eval(line)
-                res.append(json_data)
-        if self.is_predict:
-            # TODO 如果是test 模式，就进行一步切换的操作，将文章切成句子，在测试的时候再将所有的预测结果还原回来
-            res_e = []
-            for json_data in res:
-                for text in cut_sentences(json_data, self.config):
-                    # 如果是 predict 模式，则将所有的label都mask掉，因为预测模式下用不到 label
-                    res_e.append({"text": text, "label": self.config.class_list[0], "news_id": json_data["news_id"]})
-            return res_e
-        return res
 
     def __getitem__(self, index):
         json_data = self.data[index]
@@ -152,7 +138,7 @@ class build_dataset(Dataset):
                     mask = [1] * self.pad_size
                     token_ids = token_ids[:self.pad_size]
                     seq_len = self.pad_size
-            return (token_ids, self.config.class_list.index(label), seq_len, mask, news_id)
+            return (token_ids, self.config.class_list.index(label), seq_len, mask, news_id, content)
         else:
             token = self.tokenizer(content)
             seq_len = len(token)
@@ -175,9 +161,11 @@ class build_dataset(Dataset):
                     bigram.append(self.biGramHash(words_line, i, buckets))
                     trigram.append(self.triGramHash(words_line, i, buckets))
                 # -----------------
-                return (words_line, self.config.class_list.index(label), seq_len, bigram, trigram, news_id)
+                return (
+                    words_line, self.config.class_list.index(label), seq_len, bigram, trigram, news_id,
+                    content)
             else:
-                return (words_line, self.config.class_list.index(label), seq_len, news_id)
+                return (words_line, self.config.class_list.index(label), seq_len, news_id, content)
 
     def __len__(self):
         return len(self.data)
@@ -191,18 +179,21 @@ def dataset_collate_fn(config: BaseConfig, datas: List):
         bigram = torch.LongTensor([_[3] for _ in datas]).to(config.device)
         trigram = torch.LongTensor([_[4] for _ in datas]).to(config.device)
         news_ids = [_[5] for _ in datas]
-        return (x, seq_len, bigram, trigram), y, news_ids
+        origin_data = [_[6] for _ in datas]
+        return (x, seq_len, bigram, trigram), y, news_ids, origin_data
     elif "bert" in config.model_name.lower():
         mask = torch.LongTensor([_[3] for _ in datas]).to(config.device)
         news_ids = [_[4] for _ in datas]
-        return (x, seq_len, mask), y, news_ids
+        origin_data = [_[5] for _ in datas]
+        return (x, seq_len, mask), y, news_ids, origin_data
     news_ids = [_[3] for _ in datas]
-    return (x, seq_len), y, news_ids
+    origin_data = [_[4] for _ in datas]
+    return (x, seq_len), y, news_ids, origin_data
 
 
-def out_predict_dataset(predict_all_list, news_ids_list, input_tokens_all, config: BaseConfig):
-    assert len(predict_all_list) == len(news_ids_list) == len(
-        input_tokens_all), "predict_all_list not equal length input_tokens_all"
+def out_predict_dataset(predict_all_list, predict_result_score_all, news_ids_list, origin_text_all,
+                        config: BaseConfig):
+    assert len(predict_all_list) == len(news_ids_list) == len(origin_text_all), "predict_all_list not equal length input_tokens_all"
     bert_type = config.bert_type
     if "/" in bert_type:
         bert_type = config.bert_type.split("/")[1]
@@ -210,31 +201,8 @@ def out_predict_dataset(predict_all_list, news_ids_list, input_tokens_all, confi
         if "bert" not in config.model_name.lower() \
         else f"{config.model_name}_{bert_type}_predict_result.txt"
     predict_out_file = os.path.join(config.predict_out_dir, out_file_name)
-    # predict_out_file = open(predict_out_file, "w")
-    predict_res_dict = {}
-    for predict_res, news_id, token_ids in zip(predict_all_list, news_ids_list, input_tokens_all):
-        if "bert" in str(config.model_name).lower():
-            text = config.tokenizer.decode([int(x) for x in token_ids])
-            text = str(text).replace(CLS, "").replace(PAD, "").strip()
-        else:
-            text = token_ids
-        if news_id not in predict_res_dict.keys():
-            predict_res_dict[news_id] = {
-                "predict_res": [predict_res],
-                "texts": [text],
-                "t_sentence": [text] if predict_res == config.class_list[1] else [],
-                "label": True if predict_res == config.class_list[1] else False
-            }
-        else:
-            predict_res_dict[news_id]["predict_res"].append(predict_res)
-            predict_res_dict[news_id]["texts"].append(text)
-            if predict_res == config.class_list[1]:
-                predict_res_dict[news_id]["t_sentence"].append(text)
-                predict_res_dict[news_id]["label"] = True
-
-    for news_id in predict_res_dict.keys():
-        predict_res_dict[news_id].pop("predict_res")
-        predict_res_dict[news_id].pop("texts")
+    predict_res_dict = predict_res_merger(predict_all_list, predict_result_score_all, news_ids_list, origin_text_all,
+                                          config)
     predict_datas = load_jsonl(config.predict_file)
     t_labels = []
     p_labels = []
@@ -257,8 +225,14 @@ def out_predict_dataset(predict_all_list, news_ids_list, input_tokens_all, confi
         print(f"(tn:{tn}, fp:{fp}, fn:{fn}, tp:{tp}) ")
     for e in predict_datas:
         e["p_label"] = predict_res_dict[e["news_id"]]["label"]
-        e["t_sentence"] = predict_res_dict[e["news_id"]]["t_sentence"]
+        e["support_sentence"] = predict_res_dict[e["news_id"]]["support_sentence"]
     out_data_to_jsonl(predict_datas, predict_out_file)
+    # 同时生成csv 文件
+    for e in predict_datas:
+        if len(e["support_sentence"]) > 0:
+            e["support_sentence"] = "\n\n".join(e["support_sentence"])
+    out_file_name, etx = os.path.splitext(out_file_name)
+    pd.DataFrame(predict_datas).to_csv(out_file_name + ".csv")
 
 
 def out_test_dataset(predict_all_list, config: BaseConfig):
@@ -344,8 +318,6 @@ def out_test_dataset(predict_all_list, config: BaseConfig):
 class DatasetIterBertAtt:
     def __init__(self, dataset, config: BaseConfig, is_predict=False):
         self.config = config
-        if is_predict:
-            dataset = self.update_dataset(dataset)
         self.is_predict = is_predict
         self.dataset = dataset
         self.batch_size = config.batch_size
@@ -364,15 +336,6 @@ class DatasetIterBertAtt:
         self.config_classes = config.class_list
         self.config_tokenizer = config.tokenizer
 
-    def update_dataset(self, dataset):
-        res_e = []
-        for json_data in dataset:
-            for text in cut_sentences(json_data, self.config):
-                # 如果是 predict 模式，则将所有的label都mask掉，因为预测模式下用不到 label
-                res_e.append({"text": text, "label": self.config.class_list[0], "news_id": json_data["news_id"]})
-        return res_e
-
-
     def be_bert_deal(self, dataset, class_list, tokenizer):
         # hl = md5()  # TODO SHL --md5
         # print('长度', len(dataset))
@@ -380,7 +343,7 @@ class DatasetIterBertAtt:
         out = []
         labels = []
         news_ids = []
-        token_ids_list = []
+        content_list = []
         for index, line in enumerate(dataset):
             context = line['text']
             label = line['label']
@@ -422,14 +385,14 @@ class DatasetIterBertAtt:
             #     res_dict = token_dict[sent]
             #     out_bert = res_dict[4]
             #     self.out += out_bert
-            token_ids_list.append("".join([str(x) for x in token_ids_tmp_list]))
+            content_list.append(context)
             out_1 = self.out
             out.append(out_1)
             labels.append(label)
             news_ids.append(news_id)
             self.out = 0
         labels = torch.LongTensor(labels).to(self.device)
-        return out, labels, news_ids, token_ids_list
+        return out, labels, news_ids, content_list
 
     def __next__(self):
         if self.residue and self.index == self.n_batches:
@@ -493,11 +456,10 @@ def cut_sent(para):
     return sents
 
 
-def cut_sentences(json_data, config):
-    para = json_data.get("title", "") + "\n" + json_data.get("content", "")
+def para_clear(para):
     patterns = ['([。;；！？\?])([^”’])', '(\.{6})([^”’])', '(\…{2})([^”’])', '([。！？\?][”’])([^，。！？\?])']
 
-    if all([regex.search(p, para) is None for p in patterns]):
+    if all([regex.search(p, para) is None for p in patterns]) and not str(para).endswith("."):
         para = para + '.'
     para = re.sub('([。;；！？\?])([^”’])', r"\1\n\2", para)  # 单字符断句符
     para = re.sub('(\.{6})([^”’])', r"\1\n\2", para)  # 英文省略号
@@ -505,6 +467,12 @@ def cut_sentences(json_data, config):
     para = re.sub('([。！？\?][”’])([^，。！？\?])', r'\1\n\2', para)
     # 如果双引号前有终止符，那么双引号才是句子的终点，把分句符\n放到双引号后，注意前面的几句都小心保留了双引号
     para = para.rstrip()  # 段尾如果有多余的\n就去掉它
+    return para
+
+
+def cut_sentences(json_data, config):
+    para = json_data.get("title", "") + "\n" + json_data.get("content", "")
+    para = para_clear(para)
     # 破折号、英文双引号等忽略，需要的再做些简单调整即可。
     sentences = regex.split("([?？!！。.])", para)
     sentences.append("")
@@ -512,6 +480,7 @@ def cut_sentences(json_data, config):
     res = []
     for i in range(0, len(sentences)):
         text = "".join(sentences[i:i + config.cut_sen_len])  # 每steps 句拼接为一个text，进一次模型
+        text = text.replace("\n", " ")
         res.append(text)
     return res
 

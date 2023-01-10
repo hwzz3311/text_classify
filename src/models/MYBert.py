@@ -1,20 +1,40 @@
 import argparse
 import os
 
-import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from transformers import BertTokenizer, BertModel, AutoModel, AutoTokenizer, AutoModelForMaskedLM, BartPretrainedModel, \
-    AutoConfig
-# from transformers import AutoTokenizer, AutoModelForMaskedLM
-# from pytorch_pretrained_bert import BertTokenizer, BertModel
-from transformers.modeling_outputs import MaskedLMOutput
+from transformers import BertModel, AutoModel, AutoTokenizer, AutoConfig, BertConfig
 
 from src.models.config import BaseConfig
 from src.models.custom_bert import MYBertModel, MYBertContinue
 from src.utils.model_utils import split_model_layer
 
 mybert = None
+
+class MyBertSingleton(object):
+    __instance = None
+
+    def __init__(self, bert_config: BertConfig, bert_layer_nums, bert_split_dir, device):
+        print("mybert init")
+        mybert = MYBertModel(bert_config, bert_layer_nums=bert_layer_nums, bert_split_dir=bert_split_dir)
+        mybert.to(device)
+        print(f"mybert to device: {device}")
+        for param in mybert.parameters():
+            param.requires_grad = False
+        print("next(mybert.parameters()).is_cuda : ", next(mybert.parameters()).is_cuda)
+        self.mybert = mybert
+
+    def __new__(cls, *args, **kwargs):
+        # TODO : 此处可以进再一步优化，由于目前只使用了一个bert的版本，所以可以放心的使用单例模式，但是后续可能会出现多个不同版本的bert的情况，所以后续可能需要进行修改
+        if MyBertSingleton.__instance is None:
+            MyBertSingleton.__instance = super().__new__(cls, *args, **kwargs)
+        return MyBertSingleton.__instance
+
+    def __call__(self, *args, **kwargs):
+        # 将数据传入到mybert中进行预测
+        return self.mybert(*args, **kwargs)
+
+    def encoder_continue(self, *args, **kwargs):
+        return self.mybert.encoder_continue(*args, **kwargs)
 
 
 class Config(BaseConfig):
@@ -48,13 +68,14 @@ class Config(BaseConfig):
         if not os.path.exists(self.bert_split_dir) or len(os.listdir(self.bert_split_dir)) == 0:
             split_model_layer(bin_file_path, self.bert_split_dir)
         global mybert
-        print("mybert init")
-        mybert = MYBertModel(self.bert_config, bert_layer_nums=self.bert_layer_nums, bert_split_dir=self.bert_split_dir)
-        mybert.to(self.device)
-        print(f"mybert to device: {self.device}")
-        for param in mybert.parameters():
-            param.requires_grad = False
-        print("next(mybert.parameters()).is_cuda : ", next(mybert.parameters()).is_cuda)
+        if mybert is None:
+            mybert = MYBertModel(self.bert_config, bert_layer_nums=self.bert_layer_nums, bert_split_dir=self.bert_split_dir)
+            mybert.to(self.device)
+            print(f"mybert to device: {self.device}")
+            for param in mybert.parameters():
+                param.requires_grad = False
+            mybert.eval()
+
 
 class Model(nn.Module):
 
@@ -66,13 +87,19 @@ class Model(nn.Module):
         self.dropout = nn.Dropout(config.dropout)
         self.fc = nn.Linear(config.hidden_size, config.num_classes)
         assert mybert is not None
-    def get_my_bert_res(self,x):
-        context = x[0]  # 输入的句子
-        mask = x[2]  # 对padding部分进行mask，和句子一个size，padding部分用0表示，如：[1, 1, 1, 1, 0, 0]
-        x = mybert(context, attention_mask=mask)
-        hidden_states, next_decoder_cache, all_hidden_states, all_self_attentions, all_cross_attentions, \
-        extended_attention_mask, head_mask, encoder_hidden_states, \
-        encoder_extended_attention_mask, past_key_values, use_cache, output_attentions, output_hidden_states = x
+
+    def get_my_bert_res(self, x, bert_continue=False):
+        if bert_continue:
+            hidden_states, next_decoder_cache, all_hidden_states, all_self_attentions, all_cross_attentions, \
+            extended_attention_mask, head_mask, encoder_hidden_states, \
+            encoder_extended_attention_mask, past_key_values, use_cache, output_attentions, output_hidden_states = x
+        else:
+            context = x[0]  # 输入的句子
+            mask = x[2]  # 对padding部分进行mask，和句子一个size，padding部分用0表示，如：[1, 1, 1, 1, 0, 0]
+            x = mybert(context, attention_mask=mask)
+            hidden_states, next_decoder_cache, all_hidden_states, all_self_attentions, all_cross_attentions, \
+            extended_attention_mask, head_mask, encoder_hidden_states, \
+            encoder_extended_attention_mask, past_key_values, use_cache, output_attentions, output_hidden_states = x
 
         out = self.bert(hidden_states, next_decoder_cache, all_hidden_states, all_self_attentions,
                         all_cross_attentions, extended_attention_mask, head_mask, encoder_hidden_states,
@@ -80,8 +107,8 @@ class Model(nn.Module):
                         output_hidden_states)
         return out
 
-    def forward(self, x):
-        out = self.get_my_bert_res(x)
+    def forward(self, x, bert_continue=False):
+        out = self.get_my_bert_res(x, bert_continue)
         # print(out.keys())
         # print(out[0].shape)
         out = self.dropout(out[1])

@@ -11,6 +11,7 @@ from src.models.config import BaseConfig
 from src.options import RunArgs
 from src.processors import build_dataset, dataset_collate_fn, load_jsonl, build_iter_bertatt
 from src.train_eval import train, test, predict_batch
+from src.utils.data_utils import load_jsonl_file
 from src.utils.model_utils import set_seed, init_network, get_vocab
 
 logger = logging.getLogger(__name__)
@@ -40,24 +41,24 @@ if __name__ == "__main__":
     if config.check_point_path is not None and len(config.check_point_path):
         assert os.path.exists(config.check_point_path), "check point file not find !"
         model.load_state_dict(torch.load(config.check_point_path))
-    model.to(config.device)
     if config.do_train:
         #  only train
         # 加载数据
         if str(config.model_name).startswith("BertAtt"):
-            train_dataset = load_jsonl(path=config.train_file)
+            train_dataset = load_jsonl_file(config.train_file)
             train_iterator = build_iter_bertatt(train_dataset, config=config)
-            dev_dataset = load_jsonl(path=config.eval_file)
+            dev_dataset = load_jsonl_file(config.eval_file)
             dev_iterator = build_iter_bertatt(dev_dataset, config=config)
             train(config, model, train_iterator, dev_iterator)
         else:
-            train_dataset = build_dataset(config, config.train_file)
+            dataset = load_jsonl_file(config.train_file)
+            train_dataset = build_dataset(config, dataset)
             train_iterator = DataLoader(dataset=train_dataset,
                                         batch_size=config.batch_size,
                                         shuffle=config.shuffle,
                                         collate_fn=lambda x: dataset_collate_fn(config, x))
-
-            dev_dataset = build_dataset(config, config.eval_file)
+            dataset = load_jsonl_file(config.eval_file)
+            dev_dataset = build_dataset(config, dataset)
             dev_iterator = DataLoader(dataset=dev_dataset,
                                       batch_size=config.batch_size,
                                       shuffle=config.shuffle,
@@ -66,10 +67,11 @@ if __name__ == "__main__":
             train(config, model, train_iterator, dev_iterator)
     if config.do_test:
         if str(config.model_name).startswith("BertAtt"):
-            test_dataset = load_jsonl(path=config.test_file)
+            test_dataset = load_jsonl_file(config.test_file)
             test_iterator = build_iter_bertatt(test_dataset, config=config)
         else:
-            test_dataset = build_dataset(config, config.test_file)
+            dataset = load_jsonl_file(config.test_file)
+            test_dataset = build_dataset(config, dataset)
             # do test
             test_iterator = DataLoader(dataset=test_dataset,
                                        batch_size=1,
@@ -101,10 +103,11 @@ if __name__ == "__main__":
             bert_change_forward(model, param_split_dir, config.device, 20)
         model.to(config.device)
         if str(config.model_name).startswith("BertAtt"):
-            predict_dataset = load_jsonl(path=config.predict_file)
+            predict_dataset = load_jsonl_file(config.predict_file, is_predict=True, config=config)
             predict_iterator = build_iter_bertatt(predict_dataset, config=config, is_predict=True)
         else:
-            predict_dataset = build_dataset(config, config.predict_file, is_predict=True)
+            dataset = load_jsonl_file(config.predict_file, is_predict=True, config=config)
+            predict_dataset = build_dataset(config, dataset, is_predict=True)
             predict_iterator = DataLoader(dataset=predict_dataset,
                                           batch_size=config.batch_size,
                                           shuffle=True,

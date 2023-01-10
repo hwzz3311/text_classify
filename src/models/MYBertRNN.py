@@ -32,8 +32,8 @@ class Model(MYBert.Model):
         self.dropout = nn.Dropout(config.dropout)
         self.fc = nn.Linear(config.rnn_hidden * 2, config.num_classes)
 
-    def forward(self, x):
-        out = self.get_my_bert_res(x)
+    def forward(self, x, bert_continue=False):
+        out = self.get_my_bert_res(x, bert_continue)
         out = out[0]
 
         out, _ = self.lstm(out)

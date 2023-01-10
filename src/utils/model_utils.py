@@ -1,3 +1,6 @@
+import ast
+import importlib
+import logging
 import os
 import pickle
 import random
@@ -5,15 +8,154 @@ import time
 from datetime import timedelta
 
 import numpy as np
+import shap
 import torch
 from torch import nn
 from tqdm import tqdm
 
+from src.compression.moefication.utils import bert_change_forward
+from src.models import FastText
 from src.models.config import BaseConfig
+
+logger = logging.getLogger(name="flask_app")
 
 PAD, CLS = '[PAD]', '[CLS]'  # padding符号, bert中综合信息符号
 MAX_VOCAB_SIZE = 10000
 UNK = '<UNK>'
+
+
+def explainer_init(config, model):
+    softmax_fun = torch.nn.Softmax(dim=1)
+
+    def shap_predict_fun(datas, device=config.device, tokenizer=config.tokenizer, pad_size=config.pad_size):
+        datas_tokens = []
+        for x in datas:
+
+            token = tokenizer.tokenize(x)
+            token = [CLS] + token
+            seq_len = len(token)
+            mask = []
+            token_ids = tokenizer.convert_tokens_to_ids(token)
+            if pad_size:
+                if len(token) < pad_size:
+                    mask = [1] * len(token_ids) + [0] * (pad_size - len(token))
+                    token_ids += ([0] * (pad_size - len(token)))
+                else:
+                    mask = [1] * pad_size
+                    token_ids = token_ids[:pad_size]
+                    seq_len = pad_size
+            datas_tokens.append({
+                "input_ids": token_ids,
+                "seq_len": seq_len,
+                "mask": mask
+            })
+
+        input_ids = torch.LongTensor([_["input_ids"] for _ in datas_tokens]).to(device)
+        seq_len = torch.LongTensor([_["seq_len"] for _ in datas_tokens]).to(device)
+        mask = torch.LongTensor([_["mask"] for _ in datas_tokens]).to(device)
+        X = (input_ids, seq_len, mask)
+
+        with torch.no_grad():
+            outputs = model(X)
+            _outputs = outputs.detach().cpu().numpy()
+            scores = (np.exp(_outputs).T / np.exp(_outputs).sum(-1)).T
+            try:
+                predict_result = torch.max(outputs.data, dim=1)[1].cpu()
+            except:
+                outputs = torch.unsqueeze(outputs, 0)
+                predict_result = torch.max(outputs.data, dim=1)[1].cpu()
+
+            softmax_output = softmax_fun(outputs)
+
+            # outputs = softmax_output
+            # predict = torch.where(outputs > config.threshold, torch.ones_like(outputs),
+            #                       torch.zeros_like(outputs))
+
+            # print(sigmoid_output.data.cpu())
+            # sigmoid_output_list = sigmoid_output.data.cpu().numpy().tolist()
+            predict = softmax_output.detach().cpu().numpy()
+            return predict
+
+    if "topic_en_" in str(config.data_dir):
+        masker = shap.maskers.Text(r" ")
+    else:
+        masker = shap.maskers.Text(r".")
+
+    explainer = shap.Explainer(shap_predict_fun, masker, output_names=config.class_list)
+    return explainer
+
+
+def models_init(args):
+    logger.info(args.__dict__)
+    mode_name = args.model
+    x: FastText = importlib.import_module(f"src.models.{mode_name}")
+    config: FastText.Config = x.Config(args)
+
+    # 设置随机种子
+    set_seed(config)
+    logger.info(f'Process info : {config.device} , gpu_ids : {config.gpu_ids}, model_name : {config.model_name}')
+
+    # 加载模型
+    vocab = get_vocab(config, use_word=False)
+    config.n_vocab = len(vocab)
+
+    model: FastText.Model = x.Model(config)
+
+    if config.model_name != "Transformer" and "bert" not in config.model_name.lower():
+        init_network(model)
+
+    if args.check_point_path is None or len(args.check_point_path) == 0:
+        args.check_point_path = config.save_path
+    assert os.path.exists(args.check_point_path), "check point file not find !"
+    config.save_path = args.check_point_path
+    # 先统一加载到cpu，再转到gpu上
+    model.load_state_dict(torch.load(config.save_path, map_location="cpu"))
+    print("torch.load_state_dict loaded successfully for " + config.save_path)
+    print(model)
+    if config.MOE_model:
+        bert_type = config.bert_type
+        if "/" in config.bert_type:
+            bert_type = config.bert_type.split("/")[1]
+        param_split_dir = os.path.join(os.path.dirname(__file__), "../", config.data_dir,
+                                       f"saved_dict/{config.model_name}/MOE/{bert_type}")
+        assert os.path.exists(param_split_dir), "MOE model file not found"
+        bert_change_forward(model, param_split_dir, config.device, 20)
+
+    model.to(config.device)
+    model.eval()
+    print('"bert" in config.model_name.lower() ： ', "bert" in config.model_name.lower())
+    logger.info(config.__dict__)
+    return config, model
+
+
+
+
+
+def predict_res_merger(predict_all_list, predict_result_score_all, news_ids_list, origin_text_all, config):
+    predict_res_dict = {}
+    for predict_res, result_score, news_id, text in zip(predict_all_list, predict_result_score_all, news_ids_list,
+                                                        origin_text_all):
+
+        if news_id not in predict_res_dict.keys():
+            predict_res_dict[news_id] = {
+                "predict_res": [predict_res],
+                "texts": [text],
+                "support_sentence": [text] if predict_res == config.class_list[1] else [],
+                "result_score": [result_score] if predict_res == config.class_list[1] else [],
+                "label": True if predict_res == config.class_list[1] else False
+            }
+        else:
+            predict_res_dict[news_id]["predict_res"].append(predict_res)
+            predict_res_dict[news_id]["texts"].append(text)
+            if predict_res == config.class_list[1]:
+                predict_res_dict[news_id]["support_sentence"].append(text)
+                predict_res_dict[news_id]["result_score"].append(result_score)
+                predict_res_dict[news_id]["label"] = True
+
+    for news_id in predict_res_dict.keys():
+        predict_res_dict[news_id].pop("predict_res")
+        predict_res_dict[news_id].pop("texts")
+    return predict_res_dict
 
 
 def get_all_models() -> list:
@@ -21,6 +163,7 @@ def get_all_models() -> list:
     models_dir = os.path.join(filedir, "../models/")
     model_files = [file_name.replace(".py", "") for file_name in os.listdir(models_dir) if file_name[0].isupper()]
     return model_files
+
 
 def get_bert_types():
     e = {
@@ -74,7 +217,11 @@ def init_network(model: nn.Module, method="xavier", exclude="embedding", seed=12
             else:
                 pass
 
+
 def get_vocab(config: BaseConfig, use_word=False):
+    if "bert" in str(config.model_name).lower():
+        config.vocab = {}
+        return {}
     if use_word:
         tokenizer = lambda x: x.split(" ")  # 空格分割
     else:
@@ -85,6 +232,7 @@ def get_vocab(config: BaseConfig, use_word=False):
     vocab = build_vocab(config.train_file, tokenizer, max_size=MAX_VOCAB_SIZE, min_freq=1)
     pickle.dump(vocab, open(config.vocab_path, "wb"))
     print(f"Vocab size:{len(vocab)}")
+    config.vocab = vocab
     return vocab
 
 
@@ -113,7 +261,6 @@ def load_and_cache_examples():
 def get_time_dif(start_time: float):
     time_dif = time.time() - start_time
     return timedelta(seconds=int(round(time_dif)))
-
 
 
 def modelsize(model, input, type_size=4):
@@ -151,13 +298,14 @@ def modelsize(model, input, type_size=4):
         nums = np.prod(np.array(s))
         total_nums += nums
 
-
     print('Model {} : intermedite variables: {:3f} M (without backward)'
           .format(model._get_name(), total_nums * type_size / 1000 / 1000))
     print('Model {} : intermedite variables: {:3f} M (with backward)'
-          .format(model._get_name(), total_nums * type_size*2 / 1000 / 1000))
+          .format(model._get_name(), total_nums * type_size * 2 / 1000 / 1000))
+
 
 def split_model_layer(model_file_path, save_folder):
+    # 此处有一个奇怪的bug 在mac 上 layer_name 是bert. 开头；而linux系统上却并没有bert.
     model = torch.load(model_file_path, map_location='cpu')
 
     if not os.path.exists(save_folder):

@@ -4,7 +4,7 @@ import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import BertTokenizer, BertModel, AutoModel, AutoTokenizer, AutoModelForMaskedLM, BartPretrainedModel
+from transformers import BertTokenizer, BertModel, AutoModel, AutoTokenizer, AutoModelForMaskedLM
 # from transformers import AutoTokenizer, AutoModelForMaskedLM
 # from pytorch_pretrained_bert import BertTokenizer, BertModel
 from transformers.modeling_outputs import MaskedLMOutput
@@ -20,9 +20,9 @@ class Config(BaseConfig):
     def __init__(self, args: argparse.ArgumentParser):
         super(Config, self).__init__(args)
         if self.local_model:
-            self.tokenizer = AutoTokenizer.from_pretrained(self.bert_dir)
+            self.tokenizer: BertTokenizer = AutoTokenizer.from_pretrained(self.bert_dir)
         else:
-            self.tokenizer = AutoTokenizer.from_pretrained(self.bert_type)
+            self.tokenizer: BertTokenizer = AutoTokenizer.from_pretrained(self.bert_type)
         self.hidden_size = 1024 if "large" in str(self.bert_dir).lower() \
                                    or "large" in str(self.bert_type).lower() else 768
 

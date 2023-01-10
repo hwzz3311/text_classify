@@ -1,4 +1,6 @@
 import os
+import platform
+import string
 from collections import OrderedDict
 from typing import Optional, List, Union, Tuple
 
@@ -31,6 +33,7 @@ class MYBertEncoder(nn.Module):
             output_attentions: Optional[bool] = False,
             output_hidden_states: Optional[bool] = False,
             return_dict: Optional[bool] = True,
+            to_layer_num: Optional[int] = None,
     ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPastAndCrossAttentions]:
         all_hidden_states = () if output_hidden_states else None
         all_self_attentions = () if output_attentions else None
@@ -38,6 +41,10 @@ class MYBertEncoder(nn.Module):
 
         next_decoder_cache = () if use_cache else None
         for i, layer_module in enumerate(self.layer):
+            # 跑到指定层之后 就跳出 layer
+            if to_layer_num is not None and i >= to_layer_num:
+                print(f"encode_forward ： curren layer :{i}, to_layer_num :{to_layer_num} , break")
+                break
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
@@ -85,25 +92,105 @@ class MYBertEncoder(nn.Module):
                 if self.config.add_cross_attention:
                     all_cross_attentions = all_cross_attentions + (layer_outputs[2],)
         return hidden_states, next_decoder_cache, all_hidden_states, all_self_attentions, all_cross_attentions
-        # if output_hidden_states:
-        #     all_hidden_states = all_hidden_states + (hidden_states,)
-        #
-        # if not return_dict:
-        #     return tuple(
-        #         v
-        #         for v in [
-        #             hidden_states,
-        #             next_decoder_cache,
-        #             all_hidden_states,
-        #             all_self_attentions,
-        #             all_cross_attentions,
-        #         ]
-        #         if v is not None
-        #     )
+
+    def encode_continue(self,
+                        hidden_states: torch.Tensor,
+                        next_decoder_cache: torch.Tensor,
+                        all_hidden_states: torch.Tensor,
+                        all_self_attentions: torch.Tensor,
+                        all_cross_attentions: torch.Tensor,
+                        from_layer_num: int,
+                        to_layer_num: int,
+
+                        attention_mask: Optional[torch.FloatTensor] = None,
+                        head_mask: Optional[torch.FloatTensor] = None,
+                        encoder_hidden_states: Optional[torch.FloatTensor] = None,
+                        encoder_attention_mask: Optional[torch.FloatTensor] = None,
+                        past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
+                        use_cache: Optional[bool] = None,
+                        output_attentions: Optional[bool] = False,
+                        output_hidden_states: Optional[bool] = False,
+                        ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPastAndCrossAttentions]:
+        """
+
+        :param hidden_states: 来自上层bert 的输出
+        :param next_decoder_cache: 来自上层bert 的输出
+        :param all_hidden_states: 来自上层bert 的输出
+        :param all_self_attentions: 来自上层bert 的输出
+        :param all_cross_attentions: 来自上层bert 的输出
+
+
+        :param attention_mask:
+        :param head_mask:
+        :param encoder_hidden_states:
+        :param encoder_attention_mask:
+        :param past_key_values:
+        :param use_cache:
+        :param output_attentions:
+        :param output_hidden_states:
+        :param return_dict:
+        :return:
+        """
+
+        # hidden_states, next_decoder_cache, all_hidden_states, all_self_attentions, all_cross_attentions
+        for i, layer_module in enumerate(self.layer):
+            if i < from_layer_num:
+                print(f"encode_continue ： curren layer :{i}, from_layer_num :{from_layer_num} , continue")
+                continue
+            if i >= to_layer_num:
+                print(f"encode_continue ： curren layer :{i}, to_layer_num :{to_layer_num} , break")
+                break
+            if output_hidden_states:
+                all_hidden_states = all_hidden_states + (hidden_states,)
+
+            layer_head_mask = head_mask[i] if head_mask is not None else None
+            past_key_value = past_key_values[i] if past_key_values is not None else None
+
+            if self.gradient_checkpointing and self.training:
+
+                if use_cache:
+                    logger.warning(
+                        "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`..."
+                    )
+                    use_cache = False
+
+                def create_custom_forward(module):
+                    def custom_forward(*inputs):
+                        return module(*inputs, past_key_value, output_attentions)
+
+                    return custom_forward
+
+                layer_outputs = torch.utils.checkpoint.checkpoint(
+                    create_custom_forward(layer_module),
+                    hidden_states,
+                    attention_mask,
+                    layer_head_mask,
+                    encoder_hidden_states,
+                    encoder_attention_mask,
+                )
+            else:
+                layer_outputs = layer_module(
+                    hidden_states,
+                    attention_mask,
+                    layer_head_mask,
+                    encoder_hidden_states,
+                    encoder_attention_mask,
+                    past_key_value,
+                    output_attentions,
+                )
+
+            hidden_states = layer_outputs[0]
+            if use_cache:
+                next_decoder_cache += (layer_outputs[-1],)
+            if output_attentions:
+                all_self_attentions = all_self_attentions + (layer_outputs[1],)
+                if self.config.add_cross_attention:
+                    all_cross_attentions = all_cross_attentions + (layer_outputs[2],)
+        return hidden_states, next_decoder_cache, all_hidden_states, all_self_attentions, all_cross_attentions
 
 
 class MYBertModel(BertModel):
-    def __init__(self, config, bert_layer_nums,bert_split_dir, add_pooling_layer=True):
+    def __init__(self, config, bert_layer_nums, bert_split_dir, add_pooling_layer=True):
         super().__init__(config)
         self.config = config
         self.bert_layer_nums = bert_layer_nums
@@ -143,6 +230,7 @@ class MYBertModel(BertModel):
         for saved_weight_name in weight_names:
             saved_weight_file = os.path.join(self.bert_split_dir, f"{saved_weight_name}")
             saved_weight = torch.load(saved_weight_file)
+            # print(f"mybert torch load weight file: {saved_weight_file}")
             self_weight_name = self.bert_encoder_layer_dict[saved_weight_name]
             layer_dict[self_weight_name] = torch.Tensor(saved_weight)
         for weight_name in ['embeddings.position_ids', 'embeddings.word_embeddings.weight',
@@ -150,6 +238,7 @@ class MYBertModel(BertModel):
                             'embeddings.LayerNorm.weight', 'embeddings.LayerNorm.bias']:
             saved_weight_file = os.path.join(self.bert_split_dir, f"{weight_name}")
             saved_weight = torch.load(saved_weight_file)
+            # print(f"mybert torch load weight file: {saved_weight_file}")
             layer_dict[weight_name] = torch.Tensor(saved_weight)
         state_dict = self.state_dict(destination=None)
         state_dict.update(layer_dict)
@@ -171,6 +260,7 @@ class MYBertModel(BertModel):
             output_attentions: Optional[bool] = None,
             output_hidden_states: Optional[bool] = None,
             return_dict: Optional[bool] = None,
+            to_layer_num: Optional[int] = None,
     ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPoolingAndCrossAttentions]:
         r"""
         encoder_hidden_states  (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`, *optional*):
@@ -269,6 +359,7 @@ class MYBertModel(BertModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
+            to_layer_num=to_layer_num
         )
         # extended_attention_mask,
         # head_mask = head_mask,
@@ -280,7 +371,34 @@ class MYBertModel(BertModel):
         # output_hidden_states = output_hidden_states,
         hidden_states, next_decoder_cache, all_hidden_states, all_self_attentions, all_cross_attentions = encoder_outputs
         return hidden_states, next_decoder_cache, all_hidden_states, all_self_attentions, all_cross_attentions, \
-                extended_attention_mask, head_mask, encoder_hidden_states, \
+               extended_attention_mask, head_mask, encoder_hidden_states, \
+               encoder_extended_attention_mask, past_key_values, use_cache, output_attentions, output_hidden_states
+
+    def encoder_continue(self, hidden_states: torch.Tensor,
+                         next_decoder_cache: torch.Tensor,
+                         all_hidden_states: torch.Tensor,
+                         all_self_attentions: torch.Tensor,
+                         all_cross_attentions: torch.Tensor,
+                         from_layer_num: int,
+                         to_layer_num: int,
+
+                         extended_attention_mask: Optional[torch.FloatTensor] = None,
+                         head_mask: Optional[torch.FloatTensor] = None,
+                         encoder_hidden_states: Optional[torch.FloatTensor] = None,
+                         encoder_extended_attention_mask: Optional[torch.FloatTensor] = None,
+                         past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
+                         use_cache: Optional[bool] = None,
+                         output_attentions: Optional[bool] = False,
+                         output_hidden_states: Optional[bool] = False, ):
+        encoder_outputs = self.encoder.encode_continue(hidden_states, next_decoder_cache, all_hidden_states,
+                                                       all_self_attentions, all_cross_attentions, from_layer_num,
+                                                       to_layer_num, extended_attention_mask, head_mask, encoder_hidden_states,
+                                                       encoder_extended_attention_mask, past_key_values, use_cache,
+                                                       output_attentions, output_hidden_states)
+
+        hidden_states, next_decoder_cache, all_hidden_states, all_self_attentions, all_cross_attentions = encoder_outputs
+        return hidden_states, next_decoder_cache, all_hidden_states, all_self_attentions, all_cross_attentions,\
+               extended_attention_mask, head_mask, encoder_hidden_states, \
                encoder_extended_attention_mask, past_key_values, use_cache, output_attentions, output_hidden_states
 
 
@@ -471,7 +589,7 @@ class MYBertContinue(nn.Module):
             head_mask,
             encoder_hidden_states: Optional[torch.Tensor] = None,
             encoder_extended_attention_mask: Optional[torch.Tensor] = None,
-            past_key_values:Optional[List[torch.FloatTensor]] = None,
+            past_key_values: Optional[List[torch.FloatTensor]] = None,
             use_cache: Optional[bool] = None,
             output_attentions: Optional[bool] = None,
             output_hidden_states: Optional[bool] = None,
@@ -523,25 +641,3 @@ class MYBertContinue(nn.Module):
             attentions=encoder_outputs.attentions,
             cross_attentions=encoder_outputs.cross_attentions,
         )
-
-
-class Model(nn.Module):
-
-    def __init__(self, ):
-        continue_layer_nums = 2
-        # 加载
-        config = BertConfig.from_pretrained("")
-        self.bert_continue = MYBertContinue(config, continue_layer_nums=continue_layer_nums)
-        self.dropout = nn.Dropout(0.1)
-        self.fc = nn.Linear(768, 2)
-
-    def forward(self, x):
-        context = x[0]  # 输入的句子
-        mask = x[2]  # 对padding部分进行mask，和句子一个size，padding部分用0表示，如：[1, 1, 1, 1, 0, 0]
-
-        out = self.bert(context, attention_mask=mask)
-        # print(out.keys())
-        # print(out[0].shape)
-        out = self.dropout(out.get("pooler_output"))
-        out = self.fc(out)
-        return out

@@ -192,7 +192,7 @@ def hi():
 @log_filter
 def shap_analysis():
     if request.method == 'GET':
-        return render_template('base.html')
+        return render_template('base.html', models=[])
     if request.method == 'POST':
         query = None
         if query is None:
@@ -206,7 +206,7 @@ def shap_analysis():
         s = shap_plots_text(shap_values)
         # with open("./save.html", "w") as f:
         #     f.write(s)
-        return jsonify({"shap_result": s})
+        return jsonify({"select_model": config.data_dir, "shap_result": s})
 
     # return send_from_directory(os.path.dirname(__file__), "save.html")
 
@@ -266,4 +266,4 @@ def text_classify_predict():
 
 if __name__ == '__main__':
     # app.run(host="0.0.0.0",port="5005",debug=True)
-    app.run(host="0.0.0.0", port="5555", debug=False)
+    app.run(host="0.0.0.0", port="5006", debug=False)
