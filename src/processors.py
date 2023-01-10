@@ -3,7 +3,7 @@ import json
 import os.path
 import random
 import re
-from typing import List, Tuple
+from typing import List, Tuple, Optional, Dict
 
 import numpy as np
 import pandas as pd
@@ -12,13 +12,14 @@ import torch
 from sklearn import metrics
 from torch import nn
 from torch.utils import data
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 from transformers import DataProcessor, InputExample, BertModel
 import pickle as pkl
 
 from src.models.Bert import Config
 from src.models.config import BaseConfig
+from src.utils.data_utils import gen_pattern
 from src.utils.model_utils import predict_res_merger, build_vocab
 
 PAD, CLS = '[PAD]', '[CLS]'  # padding符号, bert中综合信息符号
@@ -525,3 +526,50 @@ def out_data_to_jsonl(datas, out_file_path, mode="w"):
         for e in datas:
             f.write(str(e) + "\n")
     print(f"write data len :{len(datas)} to file :{out_file_path}")
+
+
+def batch_gen_dataiter_model_dict(models, news_datas: Optional[Dict]):
+    # res_dict : {"data_iter" : [model_index]}
+    res_dict = {
+    }
+    # sen_len_dataiter_dict : {"2" : data_iter,"3":data_iter}
+    sen_len_dataiter_dict = {
+
+    }
+    data_iter_list = []
+    for model_index, (config, model, _) in enumerate(models):
+        if str(config.cut_sen_len) not in sen_len_dataiter_dict.keys():
+            base_keywords: list = config.predict_base_keywords
+            re_base_pattern = None
+            if len(base_keywords) > 0:
+                re_base_pattern = gen_pattern(base_keywords, expansion_num=0)
+            sentences = []
+            for query in news_datas:
+                #  拆分成句子
+                for text in cut_sentences(query, config):
+                    # 如果是 predict 模式，则将所有的label都mask掉，因为预测模式下用不到 label
+                    if len(str(text).strip()) < 1:
+                        continue
+                    # 进行一次关键词过滤，切记此模式不可用在训练中，只可以用在推理中，用于加速以及保证基础的P
+                    if re_base_pattern is not None and regex.search(re_base_pattern, text) is None:
+                        continue
+                    sentences.append({"text": text, "label": "other", "news_id": query['news_id']})
+            if "BertAtt" in config.model_name:
+                data_iter = build_iter_bertatt(sentences, config=config, is_predict=True)
+            else:
+                predict_dataset = build_dataset(config, sentences, is_predict=True)
+                data_iter = DataLoader(dataset=predict_dataset,
+                                       batch_size=config.batch_size,
+                                       shuffle=True,
+                                       collate_fn=lambda x: dataset_collate_fn(config, x))
+                sen_len_dataiter_dict[str(config.cut_sen_len)] = data_iter
+        else:
+            data_iter = sen_len_dataiter_dict[str(config.cut_sen_len)]
+
+        if id(data_iter) not in res_dict.keys():
+            res_dict[id(data_iter)] = [model_index]
+        else:
+            res_dict[id(data_iter)].append(model_index)
+        data_iter_list.append(data_iter)
+    sen_len_dataiter_dict.clear()
+    return res_dict, data_iter_list

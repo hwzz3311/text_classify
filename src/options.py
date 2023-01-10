@@ -49,6 +49,7 @@ class BaseArgs(object):
         parser.add_argument("--bert_layer_nums", type=int, default=10, help="保留多少层的bert")
         parser.add_argument("--bert_split_dir", default=None, help="被分层的bert模型 存储位置")
         parser.add_argument("--save_model_name", default=None, help="被保存模型的名字")
+        parser.add_argument("--predict_base_keywords_file", default=None, type=str, help="预测模型使用的关键词文件")
 
         return parser
 

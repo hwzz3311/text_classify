@@ -80,7 +80,10 @@ class BaseConfig(object):
         self.do_predict_news = args.do_predict_news
         self.bert_layer_nums = args.bert_layer_nums
         self.bert_split_dir = args.bert_split_dir
-
+        self.predict_base_keywords = []
+        if args.predict_base_keywords_file is not None and os.path.exists(args.predict_base_keywords_file):
+            self.predict_base_keywords = [x.strip() for x in open(args.predict_base_keywords_file).readlines() if
+                                          len(x.strip())]
 
         # self.eval_model_dir = args.eval_model_dir if hasattr(args, "eval_model_dir") else None
         # self.test_model_dir = args.test_model_dir if hasattr(args, "test_model_dir") else None

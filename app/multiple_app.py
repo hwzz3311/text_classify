@@ -422,7 +422,7 @@ def models_predict(query, text_md5, models):
                         predict_result_score.append(softmax_output[np.argmax(predict_result)])
                     news_ids_all.extend(news_ids)
                     # 保存token id，在后续的结果中进行还原
-                    origin_text_all.append(origin_text)
+                    origin_text_all.extend(origin_text)
                     predict_result_all.extend(predict_results)
                     predict_result_score_all.extend(predict_result_score)
                     # app.logger.info(f"predict_result_all : {predict_result_all}\n predict_result_score_all : {predict_result_score_all}\n, news_ids_all : {news_ids_all}")

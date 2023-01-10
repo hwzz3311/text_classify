@@ -75,3 +75,15 @@ def load_jsonl_file(file_path, is_predict=False, config=None):
                 res_e.append({"text": text, "label": config.class_list[0], "news_id": json_data["news_id"]})
         return res_e
     return res
+
+def gen_pattern(keywords: list, expansion_num=2, close_brackets=False) -> str:
+    keywords = keywords.copy()
+    if expansion_num > 0:
+        for index in range(len(keywords)):
+            keyword = keywords[index]
+            keyword = (".{0," + str(expansion_num) + "}").join(list(keyword))
+            keywords[index] = keyword
+    keyword_pattern = "|".join([f"({i})" for i in keywords if len(i) > 0])
+    if close_brackets:
+        keyword_pattern = "(" + keyword_pattern + ")"
+    return keyword_pattern

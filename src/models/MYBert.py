@@ -86,6 +86,7 @@ class Model(nn.Module):
             param.requires_grad = True
         self.dropout = nn.Dropout(config.dropout)
         self.fc = nn.Linear(config.hidden_size, config.num_classes)
+        self.bert_layer_nums = config.bert_layer_nums
         assert mybert is not None
 
     def get_my_bert_res(self, x, bert_continue=False):
@@ -96,7 +97,7 @@ class Model(nn.Module):
         else:
             context = x[0]  # 输入的句子
             mask = x[2]  # 对padding部分进行mask，和句子一个size，padding部分用0表示，如：[1, 1, 1, 1, 0, 0]
-            x = mybert(context, attention_mask=mask)
+            x = mybert(context, attention_mask=mask, to_layer_num=self.bert_layer_nums)
             hidden_states, next_decoder_cache, all_hidden_states, all_self_attentions, all_cross_attentions, \
             extended_attention_mask, head_mask, encoder_hidden_states, \
             encoder_extended_attention_mask, past_key_values, use_cache, output_attentions, output_hidden_states = x
