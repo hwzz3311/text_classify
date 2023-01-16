@@ -554,6 +554,9 @@ def batch_gen_dataiter_model_dict(models, news_datas: Optional[Dict]):
                     if re_base_pattern is not None and regex.search(re_base_pattern, text) is None:
                         continue
                     sentences.append({"text": text, "label": "other", "news_id": query['news_id']})
+            # 如果sentences 为空，进入DataLoader时会报错，所以添加一个空白的text
+            if len(sentences) == 0:
+                sentences.append({"text": "", "label": "other", "news_id": query['news_id']})
             if "BertAtt" in config.model_name:
                 data_iter = build_iter_bertatt(sentences, config=config, is_predict=True)
             else:

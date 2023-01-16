@@ -35,12 +35,14 @@ if __name__ == "__main__":
     config.n_vocab = len(vocab)
 
     model = x.Model(config)
-    if config.model_name != "Transformer" and\
+    if config.model_name != "Transformer" and \
             "bert" not in config.model_name.lower():
         init_network(model)
     if config.check_point_path is not None and len(config.check_point_path):
         assert os.path.exists(config.check_point_path), "check point file not find !"
         model.load_state_dict(torch.load(config.check_point_path))
+    print(f"model to : {config.device}")
+    model.to(config.device)
     if config.do_train:
         #  only train
         # 加载数据
