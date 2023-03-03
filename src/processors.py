@@ -227,6 +227,7 @@ def out_predict_dataset(predict_all_list, predict_result_score_all, news_ids_lis
     for e in predict_datas:
         e["p_label"] = predict_res_dict[e["news_id"]]["label"]
         e["support_sentence"] = predict_res_dict[e["news_id"]]["support_sentence"]
+        e["all_result_score"] = predict_res_dict[e["news_id"]]["all_result_score"]
     out_data_to_jsonl(predict_datas, predict_out_file)
     # 同时生成csv 文件
     for e in predict_datas:
