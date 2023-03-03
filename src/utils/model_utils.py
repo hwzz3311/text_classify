@@ -143,7 +143,7 @@ def predict_res_merger(predict_all_list, predict_result_score_all, news_ids_list
                 "support_sentence": [text] if predict_res == config.class_list[1] else [],
                 "result_score": [result_score] if predict_res == config.class_list[1] else [],
                 "label": True if predict_res == config.class_list[1] else False,
-                "all_result_score": True if predict_res == config.class_list[1] else False
+                "all_result_score": [result_score]
             }
         else:
             predict_res_dict[news_id]["predict_res"].append(predict_res)
