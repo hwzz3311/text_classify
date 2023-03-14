@@ -135,24 +135,34 @@ def predict_res_merger(predict_all_list, predict_result_score_all, news_ids_list
     predict_res_dict = {}
     for predict_res, result_score, news_id, text in zip(predict_all_list, predict_result_score_all, news_ids_list,
                                                         origin_text_all):
-
+        label = True if predict_res == config.class_list[1] else False
+        if config.re_base_pattern_compile is not None and config.re_base_pattern_compile.search(text) is None and label:
+            label = False
+            logger.warning(f"!! 注意这段text :{text} 被 {config.class_list[1]}模型认为正样本，但是 被关键词 过滤掉了！!")
+        f_score, t_score = 0, 0
+        if label:
+            t_score = result_score
+            f_score = 1 - t_score
+        else:
+            f_score = result_score
+            t_score = 1 - f_score
         if news_id not in predict_res_dict.keys():
             predict_res_dict[news_id] = {
                 "predict_res": [predict_res],
                 "texts": [text],
-                "support_sentence": [text] if predict_res == config.class_list[1] else [],
-                "result_score": [result_score] if predict_res == config.class_list[1] else [],
-                "label": True if predict_res == config.class_list[1] else False,
-                "all_result_score": [result_score]
+                "support_sentence": [text] if label else [],
+                "result_score": [result_score] if label else [],
+                "label": True if label else False,
+                "all_result_score": [[f_score, t_score]]
             }
         else:
             predict_res_dict[news_id]["predict_res"].append(predict_res)
             predict_res_dict[news_id]["texts"].append(text)
-            if predict_res == config.class_list[1]:
+            if label:
                 predict_res_dict[news_id]["support_sentence"].append(text)
                 predict_res_dict[news_id]["result_score"].append(result_score)
                 predict_res_dict[news_id]["label"] = True
-            predict_res_dict[news_id]["all_result_score"].append(result_score)
+            predict_res_dict[news_id]["all_result_score"].append([f_score, t_score])
 
     for news_id in predict_res_dict.keys():
         predict_res_dict[news_id].pop("predict_res")
