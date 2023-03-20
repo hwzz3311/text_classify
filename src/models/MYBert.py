@@ -7,6 +7,7 @@ from transformers import BertModel, AutoModel, AutoTokenizer, AutoConfig, BertCo
 from src.models.config import BaseConfig
 from src.models.custom_bert import MYBertModel, MYBertContinue
 from src.utils.model_utils import split_model_layer
+from blitz.modules import BayesianLinear
 
 mybert = None
 
@@ -86,6 +87,7 @@ class Model(nn.Module):
             param.requires_grad = True
         self.dropout = nn.Dropout(config.dropout)
         self.fc = nn.Linear(config.hidden_size, config.num_classes)
+        self.fc = BayesianLinear(config.hidden_size, config.num_classes)
         self.bert_layer_nums = config.bert_layer_nums
         assert mybert is not None
 

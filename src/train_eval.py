@@ -59,6 +59,10 @@ def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
     writer = SummaryWriter(log_dir=config.log_path + '/' + time.strftime('%m-%d_%H.%M', time.localtime()))
     os.makedirs(os.path.dirname(config.save_path), exist_ok=True)
     print(f"train_iter length:{len(train_iter)}")
+    eval_step = int(len(train_iter) * config.eval_scale)
+    print(f"eval_step :{eval_step}")
+    train_log_step = int(eval_step / 2)
+    print(f"train_log_step :{train_log_step}")
     for epoch in range(config.num_epochs):
         print('Epoch [{}/{}]'.format(epoch + 1, config.num_epochs))
         print(f"time_dif : {get_time_dif(start_time)}")
@@ -76,7 +80,7 @@ def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
             loss.backward()
             optimizer.step()
 
-            if total_batch % min(20, len(train_iter)) == 0:
+            if total_batch % eval_step == 0:
                 # 每多少轮输出在训练集和验证集上的效果
                 true = labels.data.cpu()
                 predic = torch.max(outputs.data, 1)[1].cpu()
@@ -99,6 +103,13 @@ def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
                 writer.add_scalar("acc/dev", dev_acc, total_batch)
                 model.train()
             total_batch += 1
+            if total_batch % train_log_step == 0:
+                true = labels.data.cpu()
+                predic = torch.max(outputs.data, 1)[1].cpu()
+                train_acc = metrics.accuracy_score(true, predic)
+                time_dif = get_time_dif(start_time)
+                msg = 'Iter: {0:>6},  Train Loss: {1:>5.8},  Train Acc: {2:>6.2%}, Time: {5}'
+                print(msg.format(total_batch, loss.item(), train_acc, time_dif))
             if total_batch - last_improve > config.require_improvement:
                 # 验证集loss超过1000batch没下降，结束训练
                 print("No optimization for a long time, auto-stopping...")
@@ -197,6 +208,9 @@ def evaluate(config: BaseConfig, model: nn.Module, data_iter, test_mode=False, p
             # input_tokens_all = input_tokens_all.append(input_tokens.data.cpu().numpy().tolist())
     if not predict_mode:
         acc = metrics.accuracy_score(labels_all, predict_all)
+        print("***** eval report start")
+        print(metrics.classification_report(labels_all, predict_all))
+        print("***** eval report end")
     if test_mode:
         report = None
         confusion = None
