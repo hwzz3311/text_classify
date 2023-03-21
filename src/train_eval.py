@@ -191,8 +191,10 @@ def predict_batch(config: BaseConfig, model: nn.Module, data_iter):
             origin_text_all.extend(origin_text)
             predict_result_all.extend(predict_results)
             predict_result_score_all.extend(predict_result_score)
+            print(f"{len(predict_result_all)=} , {len(news_ids_all)=}, {len(origin_text_all)=}")
             assert len(predict_result_all) == len(news_ids_all) == len(
-                origin_text_all), f"{len(predict_result_all)=} , {len(news_ids_all)=}, {len(origin_text_all)=}"
+                origin_text_all), f"{len(predict_result_all)=} , {len(news_ids_all)=}, " \
+                                  f"{len(origin_text_all)=},origin_text : {origin_text} , news_ids :{news_ids}"
 
     out_predict_dataset(predict_result_all, predict_result_score_all, news_ids_all, origin_text_all, config)
 
