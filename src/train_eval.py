@@ -191,6 +191,8 @@ def predict_batch(config: BaseConfig, model: nn.Module, data_iter):
             origin_text_all.extend(origin_text)
             predict_result_all.extend(predict_results)
             predict_result_score_all.extend(predict_result_score)
+            assert len(predict_result_all) == len(news_ids_all) == len(
+                origin_text_all), f"{len(predict_result_all)=} , {len(news_ids_all)=}, {len(origin_text_all)=}"
 
     out_predict_dataset(predict_result_all, predict_result_score_all, news_ids_all, origin_text_all, config)
 
@@ -225,6 +227,9 @@ def evaluate(config: BaseConfig, model: nn.Module, data_iter, test_mode=False, p
             # input_tokens_all = input_tokens_all.append(input_tokens.data.cpu().numpy().tolist())
     if not predict_mode:
         acc = metrics.accuracy_score(labels_all, predict_all)
+        print("***** eval report start")
+        print(metrics.classification_report(labels_all, predict_all))
+        print("***** eval report end")
     if test_mode:
         report = None
         confusion = None
