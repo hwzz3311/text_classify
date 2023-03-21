@@ -31,6 +31,7 @@ class BaseArgs(object):
                             help=f"{get_bert_types()}")
 
         parser.add_argument("--batch_size", default=64, type=int, help="batch_size")
+        parser.add_argument("--eval_scale", default=0.2, type=float, help="模型训练多少步进入eval")
         parser.add_argument('--data_dir', required=True, help='the data dir for train/dev/test')
         parser.add_argument('--max_seq_len', default=512, type=int, help="max seq len")
         parser.add_argument('--seed', default=42, type=int, help="random seed for initialization")

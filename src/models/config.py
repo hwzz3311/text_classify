@@ -11,6 +11,7 @@ class BaseConfig(object):
         self.model_name = args.model
 
         self.bert_type = args.bert_type
+        self.eval_scale = args.eval_scale
         self.batch_size = args.batch_size
         self.n_vocab = 0
         self.local_model = True if os.path.exists(args.bert_type) else False
