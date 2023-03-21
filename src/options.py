@@ -31,7 +31,6 @@ class BaseArgs(object):
                             help=f"{get_bert_types()}")
 
         parser.add_argument("--batch_size", default=64, type=int, help="batch_size")
-        parser.add_argument("--eval_scale", default=0.2, type=float, help="模型训练多少步进入eval")
         parser.add_argument('--data_dir', required=True, help='the data dir for train/dev/test')
         parser.add_argument('--max_seq_len', default=512, type=int, help="max seq len")
         parser.add_argument('--seed', default=42, type=int, help="random seed for initialization")
@@ -51,7 +50,7 @@ class BaseArgs(object):
         parser.add_argument("--bert_split_dir", default=None, help="被分层的bert模型 存储位置")
         parser.add_argument("--save_model_name", default=None, help="被保存模型的名字")
         parser.add_argument("--predict_base_keywords_file", default=None, type=str, help="预测模型使用的关键词文件")
-
+        parser.add_argument("--R_drop", default=False, type=bool, help="是否需要R_drop")
         return parser
 
     def get_parser(self):

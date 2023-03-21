@@ -11,7 +11,7 @@ from torch.optim import AdamW, Adam
 from torch.nn import functional as F
 from tqdm import tqdm
 
-from src.bootstrapping_loss.loss import SoftBootstrappingLoss, HardBootstrappingLoss
+from src.bootstrapping_loss.loss import SoftBootstrappingLoss, HardBootstrappingLoss, compute_kl_loss
 
 label_smoothing = 0.0005
 
@@ -21,7 +21,7 @@ from transformers import get_linear_schedule_with_warmup
 from src.models.config import BaseConfig
 from src.processors import out_predict_dataset, out_test_dataset
 from src.utils.model_utils import get_time_dif
-
+α = 0
 
 def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
     start_time = time.time()
@@ -69,14 +69,31 @@ def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
         for i, _data in enumerate(train_iter):
             optimizer.zero_grad()
             trains, labels = _data[0], _data[1]
-            outputs = model(trains)
-            # print(f"train - outputs:{outputs.shape}, labels : {labels.shape}")
-            model.zero_grad()
-            try:
-                loss = loss_func(outputs, labels)
-            except:
-                outputs = torch.unsqueeze(outputs, 0)
-                loss = loss_func(outputs, labels)
+            if config.R_drop:
+                try:
+                    ##R-drop
+                    outputs1 = model(trains)
+                    outputs2 = model(trains)
+                    outputs = torch.div((outputs1+outputs2),0.5)
+                    ce_loss = 0.5 * (loss_func(outputs1, labels) + loss_func(outputs2, labels))
+                    kl_loss = compute_kl_loss(outputs1, outputs2)
+                    loss = ce_loss + α * kl_loss
+
+                    #loss = loss_func(outputs, labels)
+                except:
+                    outputs = model(trains)
+                    outputs = torch.unsqueeze(outputs, 0)
+                    loss = loss_func(outputs, labels)
+
+            else:
+                outputs = model(trains)
+                # print(f"train - outputs:{outputs.shape}, labels : {labels.shape}")
+                model.zero_grad()
+                try:
+                    loss = loss_func(outputs, labels)
+                except:
+                    outputs = torch.unsqueeze(outputs, 0)
+                    loss = loss_func(outputs, labels)
             loss.backward()
             optimizer.step()
 
@@ -208,9 +225,6 @@ def evaluate(config: BaseConfig, model: nn.Module, data_iter, test_mode=False, p
             # input_tokens_all = input_tokens_all.append(input_tokens.data.cpu().numpy().tolist())
     if not predict_mode:
         acc = metrics.accuracy_score(labels_all, predict_all)
-        print("***** eval report start")
-        print(metrics.classification_report(labels_all, predict_all))
-        print("***** eval report end")
     if test_mode:
         report = None
         confusion = None

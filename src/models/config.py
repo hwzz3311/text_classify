@@ -2,10 +2,7 @@ import argparse
 import os
 import platform
 
-import regex
 import torch
-
-from src.utils.data_utils import gen_pattern
 
 
 class BaseConfig(object):
@@ -15,7 +12,6 @@ class BaseConfig(object):
 
         self.bert_type = args.bert_type
         self.batch_size = args.batch_size
-        self.eval_scale = args.eval_scale
         self.n_vocab = 0
         self.local_model = True if os.path.exists(args.bert_type) else False
         self.bert_dir = args.bert_type if self.local_model else None
@@ -97,13 +93,6 @@ class BaseConfig(object):
         self.cut_sen_len = args.cut_sen_len
         self.threshold = args.threshold
         self.gen_bert_emb_file = args.gen_bert_emb_file
-
-        base_keywords: list = self.predict_base_keywords
-        print(self.data_dir, "base_keywords", base_keywords)
-        re_base_pattern_compile = None
-        if len(base_keywords) > 0:
-            re_base_pattern = gen_pattern(base_keywords, expansion_num=0)
-            re_base_pattern_compile = regex.compile(re_base_pattern)
-        self.re_base_pattern_compile = re_base_pattern_compile
+        self.R_drop = args.R_drop
 
 
