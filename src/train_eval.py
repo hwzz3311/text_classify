@@ -80,7 +80,7 @@ def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
             loss.backward()
             optimizer.step()
 
-            if total_batch % eval_step == 0:
+            if total_batch != 0 and total_batch % eval_step == 0:
                 # 每多少轮输出在训练集和验证集上的效果
                 true = labels.data.cpu()
                 predic = torch.max(outputs.data, 1)[1].cpu()
@@ -108,7 +108,7 @@ def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
                 predic = torch.max(outputs.data, 1)[1].cpu()
                 train_acc = metrics.accuracy_score(true, predic)
                 time_dif = get_time_dif(start_time)
-                msg = 'Iter: {0:>6},  Train Loss: {1:>5.8},  Train Acc: {2:>6.2%}, Time: {5}'
+                msg = 'Iter: {0:>6},  Train Loss: {1:>5.8},  Train Acc: {2:>6.2%}, Time: {3}'
                 print(msg.format(total_batch, loss.item(), train_acc, time_dif))
             if total_batch - last_improve > config.require_improvement:
                 # 验证集loss超过1000batch没下降，结束训练
