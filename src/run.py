@@ -40,7 +40,7 @@ if __name__ == "__main__":
         init_network(model)
     if config.check_point_path is not None and len(config.check_point_path):
         assert os.path.exists(config.check_point_path), "check point file not find !"
-        model.load_state_dict(torch.load(config.check_point_path))
+        model.load_state_dict(torch.load(config.check_point_path, map_location="cpu"))
     print(f"model to : {config.device}")
     model.to(config.device)
     if config.do_train:
@@ -82,9 +82,9 @@ if __name__ == "__main__":
         # 加载模型
         if config.check_point_path is not None and len(config.check_point_path) and config.do_train is False:
             assert os.path.exists(config.check_point_path), "check point file not find !"
-            model.load_state_dict(torch.load(config.check_point_path))
+            model.load_state_dict(torch.load(config.check_point_path, map_location="cpu"))
         else:
-            model.load_state_dict(torch.load(config.save_path))
+            model.load_state_dict(torch.load(config.save_path, map_location="cpu"))
         model.to(config.device)
         test(config, model, test_iterator)
     if config.do_predict_news:
@@ -92,9 +92,9 @@ if __name__ == "__main__":
 
         if config.check_point_path is not None and len(config.check_point_path) and config.do_train is False:
             assert os.path.exists(config.check_point_path), "check point file not find !"
-            model.load_state_dict(torch.load(config.check_point_path))
+            model.load_state_dict(torch.load(config.check_point_path, map_location="cpu"))
         else:
-            model.load_state_dict(torch.load(config.save_path))
+            model.load_state_dict(torch.load(config.save_path, map_location="cpu"))
         if config.MOE_model:
             bert_type = config.bert_type
             if "/" in config.bert_type:
