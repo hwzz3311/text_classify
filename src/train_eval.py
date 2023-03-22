@@ -102,7 +102,7 @@ def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
                 true = labels.data.cpu()
                 predic = torch.max(outputs.data, 1)[1].cpu()
                 train_acc = metrics.accuracy_score(true, predic)
-                dev_acc, dev_loss = evaluate(config, model, dev_iter)
+                dev_acc, dev_loss, labels_all, predict_all = evaluate(config, model, dev_iter)
                 if dev_loss < dev_best_loss:
                     dev_best_loss = dev_loss
                     dev_best_acc = dev_acc
@@ -111,6 +111,10 @@ def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
                     last_improve = total_batch
                 else:
                     improve = ''
+                output_dir = os.path.join(os.path.dirname(config.save_path), "checkpoint-{}".format(total_batch))
+                os.makedirs(output_dir, exist_ok=True)
+                print(f"saving checkpoint-{total_batch} to {output_dir}")
+                torch.save(model.state_dict(), os.path.join(output_dir, os.path.basename(config.save_path)))
                 time_dif = get_time_dif(start_time)
                 msg = 'Iter: {0:>6},  Train Loss: {1:>5.8},  Train Acc: {2:>6.2%},  Val Loss: {3:>5.8},  Val Acc: {4:>6.2%},  Time: {5} {6}'
                 print(msg.format(total_batch, loss.item(), train_acc, dev_loss, dev_acc, time_dif, improve))
@@ -191,7 +195,7 @@ def predict_batch(config: BaseConfig, model: nn.Module, data_iter):
             origin_text_all.extend(origin_text)
             predict_result_all.extend(predict_results)
             predict_result_score_all.extend(predict_result_score)
-            print(f"{len(predict_result_all)=} , {len(news_ids_all)=}, {len(origin_text_all)=}")
+            # print(f"{len(predict_result_all)=} , {len(news_ids_all)=}, {len(origin_text_all)=}")
             assert len(predict_result_all) == len(news_ids_all) == len(
                 origin_text_all), f"{len(predict_result_all)=} , {len(news_ids_all)=}, " \
                                   f"{len(origin_text_all)=},origin_text : {origin_text} , news_ids :{news_ids}"
@@ -249,4 +253,4 @@ def evaluate(config: BaseConfig, model: nn.Module, data_iter, test_mode=False, p
     if predict_mode:
         predict_all_list = predict_all.tolist()
         return predict_all_list, news_ids_all, input_tokens_all
-    return acc, loss_total / len(data_iter)
+    return acc, loss_total / len(data_iter), labels_all, predict_all

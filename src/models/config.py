@@ -36,15 +36,19 @@ class BaseConfig(object):
             bert_type = self.bert_type
             if "/" in bert_type:
                 bert_type = self.bert_type.split("/")[1]
-            checkpoint_file_name = f"saved_dict/{self.model_name}/{bert_type}.cpkt"
+            checkpoint_file_name = f"saved_dict/{self.model_name}/{bert_type}_best_loss.cpkt"
+            f1_checkpoint_file_name = f"saved_dict/{self.model_name}/{bert_type}_best_f1.cpkt"
             log_dir = f"{self.model_name}/{self.bert_type}/"
         else:
-            checkpoint_file_name = f"saved_dict/{self.model_name}.cpkt"
+            checkpoint_file_name = f"saved_dict/{self.model_name}_best_loss.cpkt"
+            f1_checkpoint_file_name = f"saved_dict/{self.model_name}_best_f1.cpkt"
             log_dir = f"{self.model_name}/"
         self.save_model_name = args.save_model_name
         if self.save_model_name:
-            checkpoint_file_name = f"saved_dict/{self.model_name}/{self.save_model_name}.cpkt"
+            checkpoint_file_name = f"saved_dict/{self.model_name}/{self.save_model_name}_best_loss.cpkt"
+            f1_checkpoint_file_name = f"saved_dict/{self.model_name}/{self.save_model_name}_best_f1.cpkt"
         self.save_path = os.path.join(args.data_dir, checkpoint_file_name)
+        self.f1_save_path = os.path.join(args.data_dir, f1_checkpoint_file_name)
         self.log_path = os.path.join(args.data_dir, log_dir)
         self.gpu_ids = str(args.gpu_ids).split(",")
         # TODO 待添加多卡的支持
