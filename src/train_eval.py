@@ -1,6 +1,7 @@
 import logging
 import os
 import time
+from copy import deepcopy
 
 import numpy as np
 import torch
@@ -19,7 +20,7 @@ from torch.utils.tensorboard import SummaryWriter
 from transformers import get_linear_schedule_with_warmup
 
 from src.models.config import BaseConfig
-from src.processors import out_predict_dataset, out_test_dataset
+from src.processors import out_predict_dataset, out_test_dataset, batch_out_predict_dataset
 from src.utils.model_utils import get_time_dif
 α = 0
 
@@ -155,13 +156,7 @@ def test(config: BaseConfig, model: nn.Module, data_iter):
     print(f"Used time: {get_time_dif(start_time)}")
 
 
-def predict_batch(config: BaseConfig, model: nn.Module, data_iter):
-    # 加载模型
-    # if config.check_point_path is not None and len(config.check_point_path) and config.do_train is False:
-    #     assert os.path.exists(config.check_point_path), "check point file not find !"
-    #     model.load_state_dict(torch.load(config.check_point_path))
-    # else:
-    #     model.load_state_dict(torch.load(config.save_path))
+def predict(config: BaseConfig, model: nn.Module, data_iter):
     model.eval()
     start_time = time.time()
     news_ids_all = []
@@ -170,7 +165,7 @@ def predict_batch(config: BaseConfig, model: nn.Module, data_iter):
     predict_result_score_all = []
     softmax_fun = torch.nn.Softmax(dim=1)
     with torch.no_grad():
-        for i, _data in tqdm(enumerate(data_iter), total=len(data_iter),desc="predict_batch ing"):
+        for i, _data in tqdm(enumerate(data_iter), total=len(data_iter), desc="predict ing"):
             # trains, labels, news_ids = _data[0], _data[1], _data[2]
             trains, labels, news_ids, origin_text = _data[0], _data[1], _data[2], _data[3]
             outputs = model(trains)
@@ -204,8 +199,98 @@ def predict_batch(config: BaseConfig, model: nn.Module, data_iter):
 
     print(f"Used time: {get_time_dif(start_time)}")
 
-def evaluate(config: BaseConfig, model: nn.Module, data_iter, test_mode=False, predict_mode=False):
 
+def predict_batch(config: BaseConfig, model: nn.Module, data_iter, news_datas, debug=False):
+    model.eval()
+    start_time = time.time()
+    news_ids_all = []
+    origin_text_all = []
+    predict_result_all = []
+    predict_result_score_all = []
+    softmax_fun = torch.nn.Softmax(dim=1)
+    tmp_dict = {
+        "result": {
+            "topics": [],
+            "mains": {}}
+    }
+    res = {
+        f"{e['news_id']}": deepcopy(tmp_dict) for e in news_datas
+    }
+    tmp_dict = {
+        config.class_list[1]: []
+    }
+
+    topic_mains_sentence_dict = {
+        f"{e['news_id']}": deepcopy(tmp_dict) for e in news_datas
+    }
+    if debug:
+        res["result"]["debug_info"] = {
+            config.class_list[1]: []
+        }
+
+    with torch.no_grad():
+        for i, _data in tqdm(enumerate(data_iter), total=len(data_iter), desc="predict batch ing"):
+            trains, labels, news_ids, origin_text = _data[0], _data[1], _data[2], _data[3]
+            outputs = model(trains)
+            try:
+                predict_result = torch.max(outputs.data, dim=1)[1].cpu()
+            except:
+                outputs = torch.unsqueeze(outputs, 0)
+                predict_result = torch.max(outputs.data, dim=1)[1].cpu()
+
+            softmax_output = softmax_fun(outputs)
+            outputs = softmax_output
+            predict = torch.where(outputs > config.threshold, torch.ones_like(outputs), torch.zeros_like(outputs))
+            predict_results = []
+            predict_result_score = []
+            softmax_output_list = softmax_output.data.cpu().numpy().tolist()
+            predict_list = predict.cpu().numpy().tolist()
+            for predict_result, softmax_output in zip(predict_list, softmax_output_list):
+                predict_results.append(config.class_list[np.argmax(predict_result)])
+                predict_result_score.append(softmax_output[np.argmax(predict_result)])
+            news_ids_all.extend(news_ids)
+            # 保存token id，在后续的结果中进行还原
+            origin_text_all.extend(origin_text)
+            predict_result_all.extend(predict_results)
+            predict_result_score_all.extend(predict_result_score)
+            assert len(predict_result_all) == len(news_ids_all) == len(
+                origin_text_all), f"{len(predict_result_all)=} , {len(news_ids_all)=}, " \
+                                  f"{len(origin_text_all)=},origin_text : {origin_text} , news_ids :{news_ids}"
+
+    predict_res_dict = batch_out_predict_dataset(predict_result_all, predict_result_score_all, news_ids_all,
+                                                 origin_text_all, config)
+    for news_id in predict_res_dict.keys():
+        if predict_res_dict[news_id]["label"]:
+            res[news_id]["result"]["topics"].append(config.class_list[1])
+
+            for sen, score in zip(predict_res_dict[news_id]["support_sentence"],
+                                  predict_res_dict[news_id]["result_score"]):
+                topic_mains_sentence_dict[news_id][config.class_list[1]].append({
+                    "probability": score,
+                    "text": sen
+                })
+    if debug:
+        for text, softmax_output in zip(origin_text, softmax_output_list):
+            res["result"]["debug_info"][config.class_list[1]].append({
+                "text": text,
+                "softmax_output": {
+                    label: score for label, score in
+                    zip(config.class_list, softmax_output)
+                }
+            })
+
+    print(f"Used time: {get_time_dif(start_time)}")
+    for news_id in res.keys():
+        res[news_id]["result"]["topics"] = list(set(res[news_id]["result"]["topics"]))
+        for k, v in topic_mains_sentence_dict[news_id].items():
+            res[news_id]["result"]["mains"][k] = v
+    if debug:
+        for k in res["result"]["debug_info"].copy().keys():
+            res["result"]["debug_info"][k] = res["result"]["debug_info"].pop(k)
+    return res
+
+
+def evaluate(config: BaseConfig, model: nn.Module, data_iter, test_mode=False, predict_mode=False):
     model.eval()
     loss_total = 0
     predict_all = np.array([], dtype="int")

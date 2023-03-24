@@ -86,6 +86,7 @@ class BaseConfig(object):
         self.do_dev = args.do_dev
         self.do_test = args.do_test
         self.do_predict_news = args.do_predict_news
+        self.do_batch_infer_news = args.do_batch_infer_news
         self.bert_layer_nums = args.bert_layer_nums
         self.bert_split_dir = args.bert_split_dir
         self.predict_base_keywords = []
@@ -95,14 +96,15 @@ class BaseConfig(object):
 
         # self.eval_model_dir = args.eval_model_dir if hasattr(args, "eval_model_dir") else None
         # self.test_model_dir = args.test_model_dir if hasattr(args, "test_model_dir") else None
-        self.predict_out_dir = args.predict_out_dir if hasattr(args, "predict_out_dir") else args.data_dir
+        # self.predict_out_dir = args.predict_out_dir if hasattr(args, "predict_out_dir") \
+        #                                                and args.predict_out_dir is not None else args.data_dir
+        self.predict_out_file = args.predict_out_file
 
         self.MOE_model = args.MOE_model
         self.cut_sen_len = args.cut_sen_len
         self.threshold = args.threshold
         self.gen_bert_emb_file = args.gen_bert_emb_file
         self.R_drop = args.R_drop
-
 
         base_keywords: list = self.predict_base_keywords
         print(self.data_dir, "base_keywords", base_keywords)

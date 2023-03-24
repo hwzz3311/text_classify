@@ -3,6 +3,7 @@ import json
 import os.path
 import random
 import re
+from copy import deepcopy
 from typing import List, Tuple, Optional, Dict
 
 import numpy as np
@@ -192,16 +193,33 @@ def dataset_collate_fn(config: BaseConfig, datas: List):
     return (x, seq_len), y, news_ids, origin_data
 
 
+def batch_out_predict_dataset(predict_all_list, predict_result_score_all, news_ids_list, origin_text_all,
+                              config: BaseConfig):
+    assert len(predict_all_list) == len(news_ids_list) == len(
+        origin_text_all), "predict_all_list not equal length input_tokens_all"
+
+    predict_res_dict = predict_res_merger(predict_all_list, predict_result_score_all, news_ids_list, origin_text_all,
+                                          config)
+    return predict_res_dict
+
+
 def out_predict_dataset(predict_all_list, predict_result_score_all, news_ids_list, origin_text_all,
                         config: BaseConfig):
-    assert len(predict_all_list) == len(news_ids_list) == len(origin_text_all), "predict_all_list not equal length input_tokens_all"
+    assert len(predict_all_list) == len(news_ids_list) == len(
+        origin_text_all), "predict_all_list not equal length input_tokens_all"
     bert_type = config.bert_type
     if "/" in bert_type:
         bert_type = config.bert_type.split("/")[1]
-    out_file_name = f"{config.model_name}_predict_result.txt" \
+    out_file_name = f"{config.model_name}_threshold{config.threshold}_predict_result.txt" \
         if "bert" not in config.model_name.lower() \
-        else f"{config.model_name}_{bert_type}_predict_result.txt"
-    predict_out_file = os.path.join(config.predict_out_dir, out_file_name)
+        else f"{config.model_name}_{bert_type}_threshold{config.threshold}_predict_result.txt"
+    if not os.path.exists(config.predict_out_dir):
+        os.makedirs(config.predict_out_dir, exist_ok=True)
+    if config.predict_out_file is None:
+        predict_out_file = os.path.join(config.data_dir, out_file_name)
+    else:
+        os.makedirs(os.path.dirname(config.predict_out_file), exist_ok=True)
+        predict_out_file = config.predict_out_file
     predict_res_dict = predict_res_merger(predict_all_list, predict_result_score_all, news_ids_list, origin_text_all,
                                           config)
     predict_datas = load_jsonl(config.predict_file)
@@ -244,7 +262,7 @@ def out_test_dataset(predict_all_list, config: BaseConfig):
     out_file_name = f"{config.model_name}_predict_result.txt" \
         if "bert" not in config.model_name.lower() \
         else f"{config.model_name}_{bert_type}_predict_result.txt"
-    predict_out_file = os.path.join(config.predict_out_dir, out_file_name)
+    predict_out_file = os.path.join(config.data_dir, out_file_name)
     predict_out_file = open(predict_out_file, "w")
     with open(config.test_file, "r") as f:
         for index, line in enumerate(f):

@@ -19,9 +19,13 @@ class BaseArgs(object):
         parser.add_argument("--do_dev", default=True, type=bool)
         parser.add_argument("--do_test", default=False, type=bool)
         parser.add_argument("--do_predict_news", default=False, type=bool)
+        parser.add_argument("--do_batch_infer_news", default=False, type=bool)
+        # parser.add_argument("--predict_out_dir", type=str, help="predict_out_dir path!")
 
         parser.add_argument("--test_file", default=None, type=str, help="do test file path!")
         parser.add_argument("--predict_file", default=None, type=str, help="do test file path!")
+        parser.add_argument("--predict_out_file", type=str, help="predict_out_file path!")
+
 
         parser.add_argument("--pad_size", default=512, type=int)
 

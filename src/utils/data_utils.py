@@ -58,6 +58,14 @@ def out_data_to_jsonl(datas, out_file_path, mode="w"):
             f.write(str(e) + "\n")
     print(f"write data len :{len(datas)} to file :{out_file_path}")
 
+def pre_cut_sentences(datas, config):
+    assert config is not None, "config cannot be None under the prediction model"
+    res_e = []
+    for json_data in datas:
+        for text in cut_sentences(json_data, config):
+            # 如果是 predict 模式，则将所有的label都mask掉，因为预测模式下用不到 label
+            res_e.append({"text": text, "label": config.class_list[0], "news_id": json_data["news_id"]})
+    return res_e
 
 def load_jsonl_file(file_path, is_predict=False, config=None):
     res = []
@@ -67,13 +75,7 @@ def load_jsonl_file(file_path, is_predict=False, config=None):
             json_data: dict = ast.literal_eval(line)
             res.append(json_data)
     if is_predict:
-        assert config is not None, "config cannot be None under the prediction model"
-        res_e = []
-        for json_data in res:
-            for text in cut_sentences(json_data, config):
-                # 如果是 predict 模式，则将所有的label都mask掉，因为预测模式下用不到 label
-                res_e.append({"text": text, "label": config.class_list[0], "news_id": json_data["news_id"]})
-        return res_e
+        return pre_cut_sentences(res, config)
     return res
 
 def gen_pattern(keywords: list, expansion_num=2, close_brackets=False) -> str:
