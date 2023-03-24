@@ -134,7 +134,7 @@ if __name__ == "__main__":
         need_predict_news_id_dict = {
             x["news_id"]: x for x in need_predict_news
         }
-        news_batch = 10
+        news_batch = 2000
         t_news_count = 0
         assert config.predict_out_file is not None, "Need to specify the output path of forecast news; 需要指定输出文件的路径"
         os.makedirs(os.path.dirname(config.predict_out_file), exist_ok=True)
@@ -152,7 +152,6 @@ if __name__ == "__main__":
                                               collate_fn=lambda x: dataset_collate_fn(config, x))
             models_predict_res = predict_batch(config, model, predict_iterator, datas)
             for news_id in models_predict_res.keys():
-                print(f"models_predict_res news : {models_predict_res[news_id]}")
                 predict_topics = models_predict_res[news_id]["result"]["topics"]
 
                 models_mains_res = models_predict_res[news_id]["result"]["mains"]
@@ -171,5 +170,6 @@ if __name__ == "__main__":
                     e = {"news_id": news_id, "title": title, "content": content, "topics": predict_topics,
                          "mains": mains_res}
                     out_file_f.write(str(e) + "\n")
+            print(f"t_news_count : {t_news_count}")
             out_file_f.flush()
         out_file_f.close()
