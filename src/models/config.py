@@ -96,8 +96,8 @@ class BaseConfig(object):
 
         # self.eval_model_dir = args.eval_model_dir if hasattr(args, "eval_model_dir") else None
         # self.test_model_dir = args.test_model_dir if hasattr(args, "test_model_dir") else None
-        # self.predict_out_dir = args.predict_out_dir if hasattr(args, "predict_out_dir") \
-        #                                                and args.predict_out_dir is not None else args.data_dir
+        self.predict_out_dir = args.predict_out_dir if hasattr(args, "predict_out_dir") \
+                                                       and args.predict_out_dir is not None else args.data_dir
         self.predict_out_file = args.predict_out_file
 
         self.MOE_model = args.MOE_model
