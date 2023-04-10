@@ -3,9 +3,12 @@ import os
 import time
 from copy import deepcopy
 
+# import neptune
+import neptune
 import numpy as np
 import torch
 from sklearn import metrics
+from sklearn.metrics import precision_score, recall_score, f1_score
 
 from torch import nn
 from torch.optim import AdamW, Adam
@@ -26,6 +29,11 @@ from src.utils.model_utils import get_time_dif
 
 def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
     start_time = time.time()
+    run = neptune.init_run(
+        project="leon.zheng/text-classify",
+        api_token="eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiI0ZDMxY2FjMi0xYTA4LTRhN2YtODU2OC04NTAyYzk5MzQyY2MifQ==",
+        tags=f"loss_fun:{config.loss_fun};\nmodel:{config.model_name};\nlr:{config.lr};\nbert_type:{config.bert_type}"
+    )  # your credentials
 
     model.train()
     if "bert" in str(config.model_name).lower():
@@ -57,7 +65,9 @@ def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
         loss_func = SoftBootstrappingLoss(beta=0.95, as_pseudo_label=True)
     elif config.loss_fun == "hard_bootstrapping_loss":
         loss_func = HardBootstrappingLoss(beta=0.8)
-    writer = SummaryWriter(log_dir=config.log_path + '/' + time.strftime('%m-%d_%H.%M', time.localtime()))
+    log_dir = os.path.join(config.log_path, './' + config.model_name, f"./{config.bert_type}",
+                           time.strftime('%m-%d_%H.%M', time.localtime()))
+    writer = SummaryWriter(log_dir=log_dir)
     os.makedirs(os.path.dirname(config.save_path), exist_ok=True)
     print(f"train_iter length:{len(train_iter)}")
     eval_step = int(len(train_iter) * config.eval_scale)
@@ -95,7 +105,9 @@ def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
                 except:
                     outputs = torch.unsqueeze(outputs, 0)
                     loss = loss_func(outputs, labels)
+            run["loss"].log(loss.item(), step=total_batch)
             loss.backward()
+
             optimizer.step()
 
             if total_batch != 0 and total_batch % eval_step == 0:
@@ -104,6 +116,11 @@ def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
                 predic = torch.max(outputs.data, 1)[1].cpu()
                 train_acc = metrics.accuracy_score(true, predic)
                 dev_acc, dev_loss, labels_all, predict_all = evaluate(config, model, dev_iter)
+                run["dev_loos"].log(dev_loss, step=total_batch)
+                run["dev_acc"].log(dev_acc, step=total_batch)
+                run["precision"].log(precision_score(labels_all, predict_all))
+                run["recall"].log(recall_score(labels_all, predict_all))
+                run["f1"].log(f1_score(labels_all, predict_all))
                 if dev_loss < dev_best_loss:
                     dev_best_loss = dev_loss
                     dev_best_acc = dev_acc
@@ -112,10 +129,10 @@ def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
                     last_improve = total_batch
                 else:
                     improve = ''
-                output_dir = os.path.join(os.path.dirname(config.save_path), "checkpoint-{}".format(total_batch))
-                os.makedirs(output_dir, exist_ok=True)
-                print(f"saving checkpoint-{total_batch} to {output_dir}")
-                torch.save(model.state_dict(), os.path.join(output_dir, os.path.basename(config.save_path)))
+                # output_dir = os.path.join(os.path.dirname(config.save_path), "checkpoint-{}".format(total_batch))
+                # os.makedirs(output_dir, exist_ok=True)
+                # print(f"saving checkpoint-{total_batch} to {output_dir}")
+                # torch.save(model.state_dict(), os.path.join(output_dir, os.path.basename(config.save_path)))
                 time_dif = get_time_dif(start_time)
                 msg = 'Iter: {0:>6},  Train Loss: {1:>5.8},  Train Acc: {2:>6.2%},  Val Loss: {3:>5.8},  Val Acc: {4:>6.2%},  Time: {5} {6}'
                 print(msg.format(total_batch, loss.item(), train_acc, dev_loss, dev_acc, time_dif, improve))

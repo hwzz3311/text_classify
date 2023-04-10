@@ -16,8 +16,9 @@ from tqdm import tqdm
 from src.options import RunArgs
 from src.processors import cut_sentences, dataset_collate_fn, \
     build_dataset, build_iter_bertatt
+from src.utils.data_utils import load_jsonl_file
 from src.utils.model_utils import models_init, explainer_init, \
-    predict_res_merger, load_jsonl_file
+    predict_res_merger
 
 
 def model_init_by_parm(parm):

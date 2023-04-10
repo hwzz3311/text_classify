@@ -5,6 +5,7 @@ import logging
 import os
 import pickle as pkl
 import time
+import uuid
 from functools import wraps
 
 import numpy as np
@@ -14,12 +15,19 @@ import torch
 from flask import Flask, request, jsonify, render_template, send_from_directory
 from importlib import import_module
 
+from flask_cors import CORS
+from flask_socketio import SocketIO
 from markupsafe import Markup
+from torch.utils.data import DataLoader
 
+# from batch_predict_job import batch_gen_dataiter_model_dict
 from src.compression.moefication.utils import bert_change_forward
 from src.models import FastText
 from src.options import RunArgs
-from src.processors import build_by_sentence, CLS, be_bert_deal_by_sentecese
+from src.processors import build_by_sentence, CLS, be_bert_deal_by_sentecese, build_iter_bertatt, build_dataset, \
+    dataset_collate_fn
+from src.train_eval import predict_batch
+from src.utils.data_utils import para_sentences, pre_cut_sentences, pre_cut_by_sentences
 from src.utils.model_utils import set_seed, get_vocab, init_network, build_vocab
 from src.utils.shap_plots_text import text as shap_plots_text
 
@@ -67,7 +75,8 @@ if config.MOE_model:
     bert_type = config.bert_type
     if "/" in config.bert_type:
         bert_type = config.bert_type.split("/")[1]
-    param_split_dir = os.path.join(os.path.dirname(__file__), "../", config.data_dir, f"saved_dict/{config.model_name}/MOE/{bert_type}")
+    param_split_dir = os.path.join(os.path.dirname(__file__), "../", config.data_dir,
+                                   f"saved_dict/{config.model_name}/MOE/{bert_type}")
     assert os.path.exists(param_split_dir), "MOE model file not found"
     bert_change_forward(model, param_split_dir, config.device, 20)
 
@@ -76,6 +85,22 @@ model.eval()
 print('"bert" in config.model_name.lower() ： ', "bert" in config.model_name.lower())
 logger.info(config.__dict__)
 softmax_fun = torch.nn.Softmax(dim=1)
+
+topic_name_dict = {
+    "Greenwashing": "Greenwashing",
+    "Customer_Privacy_Incidents": "Customer_Privacy_Incidents",
+    "Safety_Accidents": "Safety_Accidents",
+    "other": "其他"
+}
+
+# 使用字典缓存 输入news的预测结果
+cache_topic_res = {}
+cache_topic_max_len = 5000
+cache_topic_md5s = []
+
+app = Flask(__name__)
+CORS(app, supports_credentials=True)
+socketio = SocketIO(app, cors_allowed_origins='*')
 
 
 def log_filter(func):
@@ -158,7 +183,6 @@ def shap_predict_fun(datas, device=config.device, tokenizer=config.tokenizer, pa
         return softmax_output
 
 
-app = Flask(__name__)
 
 if "topic_en_" in str(config.data_dir):
     masker = shap.maskers.Text(r" ")
@@ -217,7 +241,6 @@ def text_classify_predict():
     query = request.get_json()
     content = query['content']
     threshold = query.get('threshold', 0.7)
-    threshold = 0.5
     sentences = [content]
 
     if "BertAtt" in config.model_name:
@@ -233,35 +256,145 @@ def text_classify_predict():
         except:
             outputs = torch.unsqueeze(outputs, 0)
             predict_result = torch.max(outputs.data, dim=1)[1].cpu()
-        # print(outputs.data)
 
-        # sigmoid_output = torch.sigmoid(outputs)
         softmax_output = softmax_fun(outputs)
-        # print(sigmoid_output.data.cpu())
         print(softmax_output.data.cpu())
-        # sigmoid_output_list = sigmoid_output.data.cpu().numpy().tolist()
         softmax_output_list = softmax_output.data.cpu().numpy().tolist()
         outputs = softmax_output
-        # max_index = np.argmax(outputs.cpu().numpy().tolist())
-        # softmax_max_index = np.argmax(softmax_output.cpu().numpy().tolist())
         predict = torch.where(outputs > threshold, torch.ones_like(outputs), torch.zeros_like(outputs))
-        # print(predict)
         predict_result = predict.cpu().numpy().tolist()
     print(predict_result)
     print(np.argmax(predict_result[0]))
-    # print("sigmoid_max_index", config.class_list[max_index])
-    # print("softmax_max_index", config.class_list[softmax_max_index])
     class_score = {config.class_list[i]: x for i, x in enumerate(softmax_output_list[0])}
-    # softmax_class_score = {config.class_list[i]: x for i, x in enumerate(softmax_output_list[0])}
 
     return jsonify({"content": content,
                     "result": config.class_list[np.argmax(predict_result[0])],
-                    # "sigmoid_result": config.class_list[max_index],
-                    # "softmax_result": config.class_list[softmax_max_index],
                     "class_score": class_score,
-                    # "sigmoid_class_score": class_score,
-                    # "softmax_class_score": softmax_class_score
                     })
+
+
+@app.route("/auto_annotation", methods=["POST"])
+@log_filter
+def auto_annotation():
+    query = request.get_json()
+    text = query['text']
+    sentences = query['text_list']
+    threshold = query.get('threshold', 0.7)
+    content_split = str(text).split("***$@$***")
+    if len(content_split) == 3:
+        news_id, title, content = content_split
+    else:
+        news_id = uuid.uuid1().hex
+        title = ""
+        content = content_split[0]
+    news_datas = [
+        {
+            "news_id": news_id,
+            "title": title,
+            "content": content
+        }
+    ]
+    # para = text
+    # sentences: list = para_sentences(para)
+    dataset = pre_cut_by_sentences(news_id, sentences, config)
+    if str(config.model_name).startswith("BertAtt"):
+        predict_iterator = build_iter_bertatt(dataset, config=config, is_predict=True)
+    else:
+        predict_dataset = build_dataset(config, dataset, is_predict=True)
+        predict_iterator = DataLoader(dataset=predict_dataset,
+                                      batch_size=config.batch_size,
+                                      collate_fn=lambda x: dataset_collate_fn(config, x))
+    models_predict_res = predict_batch(config, model, predict_iterator, news_datas)
+    for news_id in models_predict_res.keys():
+        predict_topics = models_predict_res[news_id]["result"]["topics"]
+
+        models_mains_res = models_predict_res[news_id]["result"]["mains"]
+
+        print(f"predict_topics : {predict_topics}")
+        print(f"models_mains_res : {models_mains_res}")
+    response_dict = {}
+    result = models_predict_res[news_id]["result"]
+    mains = result["mains"]
+    res_sentence_indexs = []
+    print(f"sentences : {sentences}")
+    sentences = [str(x).strip() for x in sentences]
+    print(f"sentences : {sentences}")
+    if config.class_list[1] in mains:
+        for sup_text_dict in mains[config.class_list[1]]:
+            text = sup_text_dict["text"]
+            text_seq = para_sentences(text, clear=False)
+            v = text_seq[0].strip()
+            sentence_index = sentences.index(v)
+            if sentence_index > -1:
+                for i in range(sentence_index, sentence_index + len(text_seq)):
+                    res_sentence_indexs.append(i)
+    response_dict["res_sentence_indexs"] = list(set(res_sentence_indexs))
+    response_dict["topic_res"] = config.class_list[1] in result["topics"]
+    response_dict["sentences"] = sentences
+    return jsonify(response_dict)
+
+
+@app.route("/train_model", methods=["POST"])
+@log_filter
+def train_model():
+    # TODO
+    query = request.get_json()
+    text = query['text']
+    sentences = query['text_list']
+    threshold = query.get('threshold', 0.7)
+    content_split = str(text).split("***$@$***")
+    if len(content_split) == 3:
+        news_id, title, content = content_split
+    else:
+        news_id = uuid.uuid1().hex
+        title = ""
+        content = content_split[0]
+    news_datas = [
+        {
+            "news_id": news_id,
+            "title": title,
+            "content": content
+        }
+    ]
+    # para = text
+    # sentences: list = para_sentences(para)
+    dataset = pre_cut_by_sentences(news_id, sentences, config)
+    if str(config.model_name).startswith("BertAtt"):
+        predict_iterator = build_iter_bertatt(dataset, config=config, is_predict=True)
+    else:
+        predict_dataset = build_dataset(config, dataset, is_predict=True)
+        predict_iterator = DataLoader(dataset=predict_dataset,
+                                      batch_size=config.batch_size,
+                                      collate_fn=lambda x: dataset_collate_fn(config, x))
+
+
+    models_predict_res = predict_batch(config, model, predict_iterator, news_datas)
+    for news_id in models_predict_res.keys():
+        predict_topics = models_predict_res[news_id]["result"]["topics"]
+
+        models_mains_res = models_predict_res[news_id]["result"]["mains"]
+
+        print(f"predict_topics : {predict_topics}")
+        print(f"models_mains_res : {models_mains_res}")
+    response_dict = {}
+    result = models_predict_res[news_id]["result"]
+    mains = result["mains"]
+    res_sentence_indexs = []
+    print(f"sentences : {sentences}")
+    # sentences = [para_sentences(x) for x in sentences]
+    if config.class_list[1] in mains:
+        for sup_text_dict in mains[config.class_list[1]]:
+            text = sup_text_dict["text"]
+            text_seq = para_sentences(text, clear=False)
+            v = text_seq[0]
+            sentence_index = sentences.index(v)
+            if sentence_index > -1:
+                for i in range(sentence_index, sentence_index + len(text_seq)):
+                    res_sentence_indexs.append(i)
+    response_dict["res_sentence_indexs"] = list(set(res_sentence_indexs))
+    response_dict["topic_res"] = config.class_list[1] in result["topics"]
+    response_dict["sentences"] = sentences
+    return jsonify(response_dict)
 
 
 if __name__ == '__main__':
