@@ -37,6 +37,24 @@ class SoftBootstrappingLoss(Module):
         return beta_xentropy + bootstrap
 
 
+class CustomCrossEntropyLoss(Module):
+    def __init__(self, vocab_weights, tokenizer):
+        super(CustomCrossEntropyLoss, self).__init__()
+        self.vocab_weights = vocab_weights
+        self.tokenizer = tokenizer
+
+    def forward(self, y_pred, y, input_ids):
+        loss = F.cross_entropy(y_pred, y, reduction='none')
+        # Apply vocab_weights to specific words in the input sequences
+        for word, weight in self.vocab_weights.items():
+            word_id = self.tokenizer.convert_tokens_to_ids(word)
+            weight_mask = (input_ids == word_id).float()
+            weight_mask *= (weight - 1)
+            loss += weight_mask.sum(dim=-1)
+            continue
+        return loss.mean()
+
+
 class HardBootstrappingLoss(Module):
     """
     ``Loss(t, p) = - (beta * t + (1 - beta) * z) * log(p)``
@@ -68,10 +86,9 @@ class HardBootstrappingLoss(Module):
         return beta_xentropy + bootstrap
 
 def compute_kl_loss(p, q, pad_mask=None):
-    
     p_loss = F.kl_div(F.log_softmax(p, dim=-1), F.softmax(q, dim=-1), reduction='none')
     q_loss = F.kl_div(F.log_softmax(q, dim=-1), F.softmax(p, dim=-1), reduction='none')
-    
+
     # pad_mask is for seq-level tasks
     if pad_mask is not None:
         p_loss.masked_fill_(pad_mask, 0.)
@@ -80,7 +97,6 @@ def compute_kl_loss(p, q, pad_mask=None):
     # You can choose whether to use function "sum" and "mean" depending on your task
     p_loss = p_loss.sum()
     q_loss = q_loss.sum()
-
     loss = (p_loss + q_loss) / 2
     return loss
 

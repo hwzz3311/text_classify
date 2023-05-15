@@ -13,19 +13,24 @@ class BaseArgs(object):
 
     @staticmethod
     def initialize(parser: argparse.ArgumentParser):
-        parser.add_argument("--model", required=True, type=str, choices=get_all_models(), help=f"choices from :{'、'.join(get_all_models())}")
+        parser.add_argument("--model", required=True, type=str, choices=get_all_models(),
+                            help=f"choices from :{'、'.join(get_all_models())}")
 
         parser.add_argument("--do_train", default=False, type=bool, help="do train ?")
         parser.add_argument("--do_dev", default=True, type=bool)
         parser.add_argument("--do_test", default=False, type=bool)
+        parser.add_argument("--test_by_threshold", default=False, type=bool, help="test 模式下使用阈值")
         parser.add_argument("--do_predict_news", default=False, type=bool)
         parser.add_argument("--do_batch_infer_news", default=False, type=bool)
         # parser.add_argument("--predict_out_dir", type=str, help="predict_out_dir path!")
 
         parser.add_argument("--test_file", default=None, type=str, help="do test file path!")
+
+        parser.add_argument("--train_file", default=None, type=str, help="do train file path!")
+        parser.add_argument("--eval_file", default=None, type=str, help="do eval file path!")
+
         parser.add_argument("--predict_file", default=None, type=str, help="do test file path!")
         parser.add_argument("--predict_out_file", type=str, help="predict_out_file path!")
-
 
         parser.add_argument("--pad_size", default=512, type=int)
 
@@ -46,10 +51,13 @@ class BaseArgs(object):
         parser.add_argument("--check_point_path", default=None, help="predict models check point path")
         parser.add_argument("--shuffle", default=True, action="store_true", help="dataloader shuffle ?")
         parser.add_argument("--loss", type=str, default="cross_entropy", help="loss function",
-                            choices=["cross_entropy", "soft_bootstrapping_loss", "hard_bootstrapping_loss"], )
-        parser.add_argument("--loss_beta", type=float, help="loss beta")
+                            choices=["cross_entropy", "soft_bootstrapping_loss", "hard_bootstrapping_loss",
+                                     "custom_cross_entropy"], )
+        parser.add_argument("--loss_beta", type=float, default=0.95, help="loss beta for bootstrapping loss", )
         parser.add_argument("--cut_sen_len", type=int, default=2, help="predict 模型下 将新闻content划分的成句子，每句的长度")
         parser.add_argument("--threshold", type=float, default=0.5, help="test / predict模型下的阈值，默认0.5")
+        parser.add_argument("--threshold_for_positive", type=float, default=-1,
+                            help="阈值仅对正类别进行生效，threshold 和 threshold_for_positive 二选一")
         parser.add_argument("--gen_bert_emb_file", type=bool, default=True, help="重新生成gen_bert_emb_file 可以加快训练速度")
         parser.add_argument("--bert_layer_nums", type=int, default=10, help="保留多少层的bert")
         parser.add_argument("--bert_split_dir", default=None, help="被分层的bert模型 存储位置")

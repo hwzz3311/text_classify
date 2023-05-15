@@ -43,42 +43,45 @@ if __name__ == "__main__":
         model.load_state_dict(torch.load(config.check_point_path, map_location="cpu"))
     print(f"model to : {config.device}")
     model.to(config.device)
+    att = True if str(config.model_name).startswith("BertAtt") else False
+    config.att = att
     if config.do_train:
         #  only train
         # 加载数据
-        if str(config.model_name).startswith("BertAtt"):
-            train_dataset = load_jsonl_file(config.train_file)
-            train_iterator = build_iter_bertatt(train_dataset, config=config)
-            dev_dataset = load_jsonl_file(config.eval_file)
-            dev_iterator = build_iter_bertatt(dev_dataset, config=config)
-            train(config, model, train_iterator, dev_iterator)
-        else:
-            dataset = load_jsonl_file(config.train_file)
-            train_dataset = build_dataset(config, dataset)
-            train_iterator = DataLoader(dataset=train_dataset,
-                                        batch_size=config.batch_size,
-                                        shuffle=config.shuffle,
-                                        collate_fn=lambda x: dataset_collate_fn(config, x))
-            dataset = load_jsonl_file(config.eval_file)
-            dev_dataset = build_dataset(config, dataset)
-            dev_iterator = DataLoader(dataset=dev_dataset,
-                                      batch_size=config.batch_size,
-                                      shuffle=config.shuffle,
-                                      collate_fn=lambda x: dataset_collate_fn(config, x))
 
-            train(config, model, train_iterator, dev_iterator)
+        # if str(config.model_name).startswith("BertAtt"):
+        #     train_dataset = load_jsonl_file(config.train_file)
+        #     train_iterator = build_iter_bertatt(train_dataset, config=config, att=att)
+        #     dev_dataset = load_jsonl_file(config.eval_file)
+        #     dev_iterator = build_iter_bertatt(dev_dataset, config=config)
+        #     train(config, model, train_iterator, dev_iterator)
+        # else:
+        dataset = load_jsonl_file(config.train_file)
+        train_dataset = build_dataset(config, dataset, att=att)
+        train_iterator = DataLoader(dataset=train_dataset,
+                                    batch_size=config.batch_size,
+                                    shuffle=config.shuffle,
+                                    collate_fn=lambda x: dataset_collate_fn(config, x))
+        dataset = load_jsonl_file(config.eval_file)
+        dev_dataset = build_dataset(config, dataset, att=att)
+        dev_iterator = DataLoader(dataset=dev_dataset,
+                                  batch_size=config.batch_size,
+                                  shuffle=config.shuffle,
+                                  collate_fn=lambda x: dataset_collate_fn(config, x))
+
+        train(config, model, train_iterator, dev_iterator)
     if config.do_test:
-        if str(config.model_name).startswith("BertAtt"):
-            test_dataset = load_jsonl_file(config.test_file)
-            test_iterator = build_iter_bertatt(test_dataset, config=config)
-        else:
-            dataset = load_jsonl_file(config.test_file)
-            test_dataset = build_dataset(config, dataset)
-            # do test
-            test_iterator = DataLoader(dataset=test_dataset,
-                                       batch_size=1,
-                                       shuffle=True,
-                                       collate_fn=lambda x: dataset_collate_fn(config, x))
+        # if str(config.model_name).startswith("BertAtt"):
+        #     test_dataset = load_jsonl_file(config.test_file)
+        #     test_iterator = build_iter_bertatt(test_dataset, config=config)
+        # else:
+        dataset = load_jsonl_file(config.test_file)
+        test_dataset = build_dataset(config, dataset, att)
+        # do test
+        test_iterator = DataLoader(dataset=test_dataset,
+                                   batch_size=1,
+                                   shuffle=True,
+                                   collate_fn=lambda x: dataset_collate_fn(config, x))
         # 加载模型
         if config.check_point_path is not None and len(config.check_point_path) and config.do_train is False:
             assert os.path.exists(config.check_point_path), "check point file not find !"
@@ -142,6 +145,7 @@ if __name__ == "__main__":
         for i in tqdm([i for i in range(0, len(need_predict_news), news_batch)], desc="分段 batch ing"):
             datas = need_predict_news[i:i + news_batch]
             dataset = pre_cut_sentences(datas, config)
+            # TODO 更新 BertAtt 在推理阶段的代码
             if str(config.model_name).startswith("BertAtt"):
                 predict_iterator = build_iter_bertatt(dataset, config=config, is_predict=True)
             else:
