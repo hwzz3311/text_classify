@@ -22,11 +22,22 @@ class BaseConfig(object):
         dir_list = [dir_name for dir_name in os.listdir(os.path.join(os.path.dirname(__file__), "../../assets/data/"))]
         assert os.path.exists(os.path.join(os.path.dirname(__file__), "../../", args.data_dir)), f"not find dataset : {args.data_dir} , choose a dataset : {', '.join(dir_list)}"
         self.data_dir = args.data_dir
+        self.test_by_threshold = args.test_by_threshold
+
         args.data_dir = os.path.join(os.path.dirname(__file__), "../../", args.data_dir)
-        self.train_file = os.path.join(args.data_dir, "train.json")
-        self.eval_file = os.path.join(args.data_dir, "eval.json")
-        self.test_file = args.test_file if args.test_file is not None and len(args.test_file) and\
+
+        # self.train_file = os.path.join(args.data_dir, "train.json")
+        # self.eval_file = os.path.join(args.data_dir, "eval.json")
+
+
+        self.train_file = args.train_file if args.train_file is not None and len(args.train_file) and\
+                                           os.path.exists(args.train_file) else os.path.join(args.data_dir, "train.json")
+        self.eval_file = args.eval_file if args.eval_file is not None and len(args.eval_file) and \
+                                           os.path.exists(args.eval_file) else os.path.join(args.data_dir, "eval.json")
+        self.test_file = args.test_file if args.test_file is not None and len(args.test_file) and \
                                            os.path.exists(args.test_file) else os.path.join(args.data_dir, "test.json")
+
+
         self.predict_file = args.predict_file if args.predict_file is not None and len(args.predict_file) and\
                                            os.path.exists(args.predict_file) else os.path.join(args.data_dir, "predict.json")
         self.class_list = [x.strip() for x in open(os.path.join(args.data_dir, "labels.txt")).readlines()]
@@ -81,6 +92,7 @@ class BaseConfig(object):
         self.check_point_path = args.check_point_path
         self.shuffle = args.shuffle
         self.loss_fun = args.loss
+        self.loss_beta = args.loss_beta
 
         self.do_train = args.do_train
         self.do_dev = args.do_dev
@@ -103,6 +115,7 @@ class BaseConfig(object):
         self.MOE_model = args.MOE_model
         self.cut_sen_len = args.cut_sen_len
         self.threshold = args.threshold
+        self.threshold_for_positive = args.threshold_for_positive
         self.gen_bert_emb_file = args.gen_bert_emb_file
         self.R_drop = args.R_drop
 

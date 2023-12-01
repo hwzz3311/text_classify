@@ -2,7 +2,7 @@
 import argparse
 import os
 
-from transformers import AutoTokenizer, AutoModel, AutoConfig, BertModel
+from transformers import AutoTokenizer, AutoModel, AutoConfig, BertModel, pipeline
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -13,23 +13,27 @@ import math
 # 定义配置文件
 from src.models.config import BaseConfig
 
-
+bert_model = None
 class Config(BaseConfig):
     """
     bert_type：
     """
 
     def __init__(self, args: argparse.ArgumentParser):
+        global bert_model
         super(Config, self).__init__(args)
         if self.local_model:
             self.tokenizer = AutoTokenizer.from_pretrained(self.bert_dir)
+            self.model_config = AutoConfig.from_pretrained(self.bert_dir)
             self.bert_model: BertModel = AutoModel.from_pretrained(self.bert_dir).to(self.device)
         else:
             self.tokenizer = AutoTokenizer.from_pretrained(self.bert_type)
+            self.model_config = AutoConfig.from_pretrained(self.bert_type)
             self.bert_model: BertModel = AutoModel.from_pretrained(self.bert_type).to(self.device)
+        bert_model = self.bert_model
         self.hidden_size = 1024 if "large" in str(self.bert_dir).lower() \
                                    or "large" in str(self.bert_type).lower() else 768
-        self.head = 8
+        self.head = 12
         self.embedding = self.hidden_size
 
 
@@ -82,7 +86,33 @@ class Config(BaseConfig):
 #         """
 #         return nn.ModuleList([copy.deepcopy(module) for _ in range(N)])
 
+import torch
+import torch.nn.functional as F
 
+
+def transform_data(data, target_shape):
+    # data：输入的张量
+    # target_shape: 目标形状
+    # target_shape应该是形如[1, 2048, 768]的张量
+
+    # 确定需要填充的行数和列数
+    pad_rows = target_shape[1] - data.shape[1]
+    pad_cols = target_shape[2] - data.shape[2]
+
+    # 行和列分别填充
+    if pad_rows > 0:
+        data = F.pad(data, (0, 0, 0, pad_rows))
+    if pad_cols > 0:
+        data = F.pad(data, (0, pad_cols, 0, 0))
+
+    # 裁剪超过目标形状的行和列
+    start_row = (data.shape[1] - target_shape[1]) // 2
+    end_row = start_row + target_shape[1]
+    start_col = (data.shape[2] - target_shape[2]) // 2
+    end_col = start_col + target_shape[2]
+    data = data[:, start_row:end_row, start_col:end_col]
+
+    return data
 
 
 class Model(nn.Module):
@@ -102,31 +132,61 @@ class Model(nn.Module):
         #     for name, param in self.bert.named_parameters():
         #         param.requires_grad = True
         # self.tokenizer = config.tokenizer
+
         self.dropout = nn.Dropout(config.dropout)
         # self.attn = MultiHeadedAttention(head=config.head, embedding_dim=config.embedding, dropout=config.dropout)
-        from src.models.BertAttRNN import MultiHeadedAttention
-        self.attn = MultiHeadedAttention(config.head, config.embedding, config.dropout)
-        self.fc_01 = nn.Linear(config.hidden_size, int(config.hidden_size / 2))
-        self.fc_02 = nn.Linear(int(config.hidden_size / 2), config.num_classes)
+        # from src.models.BertAttRNN import MultiHeadedAttention
+        # self.attn = MultiHeadedAttention(config.head, config.embedding, config.dropout)
+        self.att_max_hidden_size = 2048
+
+        # self.attn = nn.MultiheadAttention(config.head, self.att_max_hidden_size, config.dropout)
+        self.attention = nn.MultiheadAttention(embed_dim=config.hidden_size, num_heads=config.head)
+
+        self.classifier = nn.Linear(config.hidden_size, config.num_classes)
+
+        # self.conv1d = nn.Conv1d(in_channels=2048, out_channels=256, kernel_size=3)
 
     def forward(self, x):
-        out = x  # 1，256，768
-        out_all = None
-        for i in out:
-            p_attn = self.attn(i, i, i)
-            # print('111111', p_attn.shape)
-            # 第三步经过第一个全连接层
-            out_fc = self.fc_01(p_attn)  # [32, 256, 2]
-            # 第四步经过第二个全连接层
-            out_fc = self.fc_02(out_fc)
-            out_attn = out_fc[:, 0]  # [32, 2]
+        input_ids = x[0]
+        attention_mask = x[2]
+        # out = x  # 1，256，768
+        # out_all = None
+        last_hidden_states = []
+        num_windows = input_ids.size(1)
 
-            if out_all is None:
-                out_all = out_attn
-            else:
-                out_all = torch.cat([out_all, out_attn], 0)
+        last_hidden_states_list = []
+        for i in range(num_windows):
+            input_ids_ = input_ids[:, i]
+            attention_mask_ = attention_mask[:, i]
+            outputs = bert_model(input_ids_, attention_mask=attention_mask_)
+            last_hidden_state = outputs.last_hidden_state
 
-        return out_all
+            # add the last hidden states to the list
+            last_hidden_states.append(last_hidden_state)
+
+        # iterate over the input in a sliding window
+        # for i in range(0, input_ids.shape[1], 128):
+        #     # select a window of size 512
+        #     input_ids_slice = input_ids[:, i:i + 512]
+        #     attention_mask_slice = attention_mask[:, i:i + 512]
+        #
+        #     # get last hidden states for the window
+        #     outputs = bert_model(input_ids_slice, attention_mask=attention_mask_slice)
+        #     last_hidden_state = outputs.last_hidden_state
+        #
+        #     # add the last hidden states to the list
+        #     last_hidden_states.append(last_hidden_state)
+
+        last_hidden_states = torch.cat(last_hidden_states, dim=1)
+        last_hidden_states = self.dropout(last_hidden_states)
+
+        # apply self-attention to get the attention-weighted representation
+        attention_output, _ = self.attention(last_hidden_states, last_hidden_states, last_hidden_states)
+
+        # apply classification layer
+        logits = self.classifier(attention_output.mean(dim=0))
+
+        return logits
 
 
 if __name__ == '__main__':

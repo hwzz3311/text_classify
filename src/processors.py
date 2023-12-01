@@ -20,7 +20,7 @@ import pickle as pkl
 
 from src.models.Bert import Config
 from src.models.config import BaseConfig
-from src.utils.data_utils import gen_pattern
+from src.utils.data_utils import gen_pattern, para_sentences
 from src.utils.model_utils import predict_res_merger, build_vocab
 
 PAD, CLS = '[PAD]', '[CLS]'  # padding符号, bert中综合信息符号
@@ -90,10 +90,12 @@ def build_by_sentence(config: Config, sentences, vocab, label, pad_size=32):
 
 
 class build_dataset(Dataset):
-    def __init__(self, config: BaseConfig, dataset, is_predict=False):
+    def __init__(self, config: BaseConfig, dataset, is_predict=False, att=False):
         self.config = config
         self.pad_size = config.pad_size
         self.is_predict = is_predict
+        self.att = att
+        self.original_dataset = dataset
 
         self.data = dataset
         self.tokenizer = lambda x: [y for y in x]  # char-level
@@ -105,6 +107,12 @@ class build_dataset(Dataset):
                                          min_freq=1)
                 pkl.dump(self.vocab, open(config.vocab_path, 'wb'))
             print(f"Vocab size: {len(self.vocab)}")
+        if att:
+            # 当使用att时动态的加载不同的数据处理器
+            self.data = self.gen_att_datas()
+            # self.__getitem__ == self.__att__getitem__
+            self.bert_model = config.bert_model
+            self.dropout = config.dropout
 
     def biGramHash(self, sequence, t, buckets):
         t1 = sequence[t - 1] if t - 1 >= 0 else 0
@@ -115,7 +123,138 @@ class build_dataset(Dataset):
         t2 = sequence[t - 2] if t - 2 >= 0 else 0
         return (t2 * 14918087 * 18408749 + t1 * 14918087) % buckets
 
-    def __getitem__(self, index):
+    def gen_att_datas(self):
+        self.att_datas = []
+        # 这里添加对原始数据的处理办法
+        # 重采样等等
+        for json_data in self.original_dataset:
+            title_content_sep = ". "
+            topic_name = self.config.class_list[1]
+            try:
+                # 此时取到的是
+                title, content = json_data["title"], json_data["content"]
+            except KeyError:
+                print(json_data)
+            if self.is_predict or "news_id" in json_data.keys():
+                news_id = json_data["news_id"]
+            else:
+                news_id = ""
+            content = " " * len(news_id) + " " * 9 + title + " " * 9 + content
+            title_len = len(title)
+            offset = len('***$@$***') * 2 - len(title_content_sep) + len(news_id)
+            offset = 0
+            if topic_name in json_data.keys():
+                for loc in json_data[topic_name]:
+                    start, end = loc
+                    if start >= title_len:
+                        start -= offset
+                        end -= offset
+                    label_text = content[start: end]
+
+                    self.att_datas.append({
+                        "text": label_text,
+                        "label": topic_name,
+                        "news_id": news_id,
+                    })
+                    if end != len(content):
+                        start_text = content[start:]
+                        self.att_datas.append({
+                            "text": start_text,
+                            "label": topic_name,
+                            "news_id": news_id,
+                        })
+
+                    if start != 0:
+                        end_text = content[:end]
+                        self.att_datas.append({
+                            "text": end_text,
+                            "label": topic_name,
+                            "news_id": news_id,
+                        })
+
+                    if start != 0 and end != len(content):
+                        before_text = content[:start]
+                        after_text = content[end:]
+                        curr_text = before_text + label_text + after_text
+                        self.att_datas.append({
+                            "text": curr_text,
+                            "label": topic_name,
+                            "news_id": news_id,
+                        })
+            # 加入不属于当前topic的数据作为负样本
+            # for k, v in json_data.items():
+            #     for start, end in json_data[k]:
+            #         if start >= title_len:
+            #             start -= offset
+            #             end -= offset
+            #         other_label_text = content[start:end]
+            #         self.att_datas.append({
+            #             "text": other_label_text,
+            #             "label": self.config.class_list[0],
+            #             "news_id": news_id,
+            #         })
+            else:
+                # 随机从负样本中抽取 N个句子
+                content_sents = para_sentences(content)
+                if title:
+                    content_sents.append(title)
+                sampled_sents = random.sample(content_sents, min(8, len(content_sents)))
+                for s in sampled_sents:
+                    if s.strip():
+                        self.att_datas.append({
+                            "text": s.strip(),
+                            "label": self.config.class_list[0],
+                            "news_id": news_id,
+                        })
+                # if random.uniform(0.0, 1.0) > 0.5:
+        return self.att_datas
+
+    def __att__getitem__(self, index):
+        att_data: dict = self.data[index]
+        label = att_data["label"]
+        text = att_data["text"]
+        news_id = att_data["news_id"]
+        max_length = self.config.max_seq_len
+        token = self.config.tokenizer.tokenize(text)
+        count = 0
+        last_hidden_states = []
+        all_token_ids = []
+        all_seq_len = []
+        all_mask = []
+        seq_len_count = 0
+        while len(token) > max_length or count < 1:
+            curr_token = [CLS] + token[:max_length]
+
+            seq_len = len(curr_token)
+            mask = []
+            token_ids = self.config.tokenizer.convert_tokens_to_ids(curr_token)
+            if self.pad_size:
+                if len(curr_token) < self.pad_size:
+                    mask = [1] * len(token_ids) + [0] * (self.pad_size - len(curr_token))
+                    token_ids += ([0] * (self.pad_size - len(curr_token)))
+                else:
+                    mask = [1] * self.pad_size
+                    token_ids = token_ids[:self.pad_size]
+                    seq_len = self.pad_size
+
+            # token_ids = torch.LongTensor(token_ids).to(self.config.device)
+            # mask = torch.LongTensor(mask).to(self.config.device)
+            all_token_ids.append(token_ids)
+            all_seq_len.append(seq_len)
+            all_mask.append(mask)
+
+            # res = self.bert_model(token_ids.unsqueeze(0), attention_mask=mask.unsqueeze(0))
+            # drop_data = nn.Dropout(self.dropout).to(self.config.device)
+            # out_bert = drop_data(res.get('last_hidden_state')).to(self.config.device)
+            # last_hidden_states.append(res.get('last_hidden_state'))
+            token = token[max_length:]
+            count += 1
+        # last_hidden_states = torch.cat(last_hidden_states, dim=1)
+
+        # return last_hidden_states, self.config.class_list.index(label), None, None, news_id, text
+        return (all_token_ids, self.config.class_list.index(label), all_seq_len, all_mask, news_id, text)
+
+    def __normal__getitem__(self, index):
         json_data = self.data[index]
         try:
             content, label = json_data["text"], json_data["label"]
@@ -169,11 +308,25 @@ class build_dataset(Dataset):
             else:
                 return (words_line, self.config.class_list.index(label), seq_len, news_id, content)
 
+    def __getitem__(self, index):
+        if self.att:
+            return self.__att__getitem__(index)
+        else:
+            return self.__normal__getitem__(index)
+
     def __len__(self):
         return len(self.data)
 
 
 def dataset_collate_fn(config: BaseConfig, datas: List):
+    # if config.att:
+    #     x = torch.LongTensor([_[0] for _ in datas]).to(config.device)
+    #     seq_len = [None for _ in datas]
+    #     mask = [None for _ in datas]
+    #     y = torch.LongTensor([_[1] for _ in datas]).to(config.device)
+    #     news_ids = [_[4] for _ in datas]
+    #     origin_data = [_[5] for _ in datas]
+    #     return (x, seq_len, mask), y, news_ids, origin_data
     x = torch.LongTensor([_[0] for _ in datas]).to(config.device)
     y = torch.LongTensor([_[1] for _ in datas]).to(config.device)
     seq_len = torch.LongTensor([_[2] for _ in datas]).to(config.device)
@@ -255,85 +408,36 @@ def out_predict_dataset(predict_all_list, predict_result_score_all, news_ids_lis
     pd.DataFrame(predict_datas).to_csv(out_file_name + ".csv")
 
 
-def out_test_dataset(predict_all_list, config: BaseConfig):
+def out_test_dataset(predict_all_list, labels_all_list, original_text_all, softmax_score_all, config: BaseConfig):
+    predict_results_dict = {}
+    predict_results_list = []
+    for p, t, text, softmax_score in zip(predict_all_list, labels_all_list, original_text_all, softmax_score_all):
+        e = {"predict": p, "label": t, "text": text}
+        for i, score in enumerate(softmax_score):
+            e[f"score_{i}"] = score
+        predict_results_dict[text] = e
+        predict_results_list.append(e)
     bert_type = config.bert_type
     if "/" in bert_type:
         bert_type = config.bert_type.split("/")[1]
-    out_file_name = f"{config.model_name}_predict_result.txt" \
+    out_file_name = f"{config.model_name}_{config.threshold}_predict_result.txt" \
         if "bert" not in config.model_name.lower() \
-        else f"{config.model_name}_{bert_type}_predict_result.txt"
+        else f"{config.model_name}_{bert_type}_{config.threshold}_predict_result.txt"
+    out_csv_file_name = os.path.splitext(out_file_name)[0] + ".csv"
     predict_out_file = os.path.join(config.data_dir, out_file_name)
+    predict_out_csv_file = os.path.join(config.data_dir, out_csv_file_name)
     predict_out_file = open(predict_out_file, "w")
     with open(config.test_file, "r") as f:
-        for index, line in enumerate(f):
-            try:
-                line = line.split("\t")[0]
-                predict_out_file.write(line.replace("\n", "") + f"\t {predict_all_list[index]} \n")
-            except:
-                pass
+        for line in f:
+            line = ast.literal_eval(line)
+            text = line["text"]
+            predict_results = predict_results_dict[text]
+            predict_out_file.write(str(predict_results) + "\n")
+    predict_out_file.close()
+    pd.DataFrame(predict_results_list).to_csv(predict_out_csv_file, index=False)
+    print(f"predict_out_file path: {predict_out_file}")
+    print(f"predict_out_csv_file path: {predict_out_csv_file}")
 
-
-# class DatasetIter(object):
-#     def __init__(self, config: BaseConfig, batches, batch_size, device):
-#         self.config = config
-#         self.batch_size = batch_size
-#         self.batches = batches
-#         print(f"len(self.batches) = {len(self.batches)}")
-#         self.n_batches = len(self.batches) // self.batch_size
-#         # print(f"self.n_batches = {self.n_batches},self.batch_size = {self.batch_size},len(self.batches) = {len(self.batches)}")
-#         self.residue = False
-#         if len(batches) % self.n_batches != 0:
-#             self.residue = True
-#         self.index = 0
-#         self.device = device
-#
-#     def _to_tensor(self, datas):
-#         x = torch.LongTensor([_[0] for _ in datas]).to(self.device)
-#         y = torch.LongTensor([_[1] for _ in datas]).to(self.device)
-#         # pad 前的长度（超过pad_size的设为pad_size）
-#         seq_len = torch.LongTensor([_[2] for _ in datas]).to(self.device)
-#         # print(f"x:{x.shape}, seq_len:{seq_len.shape},y:{y.shape}")
-#         if self.config.model_name == "FastText":
-#             bigram = torch.LongTensor([_[3] for _ in datas]).to(self.device)
-#             trigram = torch.LongTensor([_[4] for _ in datas]).to(self.device)
-#             return (x, seq_len, bigram, trigram), y
-#         elif "bert" in self.config.model_name.lower():
-#             mask = torch.LongTensor([_[3] for _ in datas]).to(self.device)
-#             return (x, seq_len, mask), y
-#
-#         return (x, seq_len), y
-#
-#     def __iter__(self):
-#         return self
-#
-#     def __next__(self):
-#         # 当不够一个batch的时候
-#         if self.residue and self.index == self.n_batches:
-#             batches = self.batches[self.index * self.batch_size:]
-#             self.index += 1
-#             batches = self._to_tensor(batches)
-#             return batches
-#         # index 超出，则主动停止
-#         elif self.index >= self.n_batches:
-#             self.index = 0
-#             raise StopIteration
-#         else:
-#             batches = self.batches[self.index * self.batch_size: (self.index + 1) * self.batch_size]
-#             # print("1.else __next__", len(batches))
-#             self.index += 1
-#             batches = self._to_tensor(batches)
-#             # print("2.else __next__", len(batches))
-#             return batches
-#
-#     def __len__(self):
-#         return self.n_batches + 1 if self.residue else self.n_batches
-
-
-# def build_iterator(config: BaseConfig, dataset, batch_size=None):
-#     if batch_size is None:
-#         batch_size = config.batch_size
-#     iterator = DatasetIter(config, dataset, batch_size, config.device)
-#     return iterator
 
 class DatasetIterBertAtt:
     def __init__(self, dataset, config: BaseConfig, is_predict=False):
@@ -371,7 +475,7 @@ class DatasetIterBertAtt:
             if self.is_predict:
                 news_id = line["news_id"]
             label = class_list.index(label)
-            sents = cut_sent(context)  # 对句子进行分句
+            sents = para_sentences(context)  # 对句子进行分句
             token_ids_tmp_list = []
             for sent in sents:
                 # if md5(sent) not in token_dict.keys():
@@ -458,24 +562,6 @@ def load_jsonl(path):
     return res
 
 
-def cut_sent(para):
-    patterns = ['([。;；！？\?])([^”’])', '(\.{6})([^”’])', '(\…{2})([^”’])', '([。！？\?][”’])([^，。！？\?])']
-
-    if all([regex.search(p, para) is None for p in patterns]):
-        para = para + '.'
-    para = re.sub('([。;；！？\?])([^”’])', r"\1\n\2", para)  # 单字符断句符
-    para = re.sub('(\.{6})([^”’])', r"\1\n\2", para)  # 英文省略号
-    para = re.sub('(\…{2})([^”’])', r"\1\n\2", para)  # 中文省略号
-    para = re.sub('([。！？\?][”’])([^，。！？\?])', r'\1\n\2', para)
-    # 如果双引号前有终止符，那么双引号才是句子的终点，把分句符\n放到双引号后，注意前面的几句都小心保留了双引号
-    para = para.rstrip()  # 段尾如果有多余的\n就去掉它
-    # 破折号、英文双引号等忽略，需要的再做些简单调整即可。
-    sents = para.split("\n")
-    sents = [s.strip() for s in sents]
-    sents = [s for s in sents if s]
-    return sents
-
-
 def para_clear(para):
     patterns = ['([。;；！？\?])([^”’])', '(\.{6})([^”’])', '(\…{2})([^”’])', '([。！？\?][”’])([^，。！？\?])']
 
@@ -507,7 +593,7 @@ def cut_sentences(json_data, config):
 
 def be_bert_deal_by_sentecese(dataset, config: Config):
     outs = 0
-    sents = cut_sent(dataset)
+    sents = para_sentences(dataset)
     for sent in sents:
         token = config.tokenizer.tokenize(sent)
         token = [CLS] + token

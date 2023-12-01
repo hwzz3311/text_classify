@@ -7,6 +7,9 @@ from transformers import BertModel, AutoModel, AutoTokenizer, AutoConfig, BertCo
 from src.models.config import BaseConfig
 from src.models.custom_bert import MYBertModel, MYBertContinue
 from src.utils.model_utils import split_model_layer
+"""
+此处主要实现为了解决
+"""
 
 mybert = None
 
@@ -97,8 +100,7 @@ class Model(nn.Module):
         else:
             context = x[0]  # 输入的句子
             mask = x[2]  # 对padding部分进行mask，和句子一个size，padding部分用0表示，如：[1, 1, 1, 1, 0, 0]
-            x = mybert(context, attention_mask=mask, to_layer_num=self.bert_layer_nums, return_dict=True,
-                       output_attentions=True)
+            x = mybert(context, attention_mask=mask, to_layer_num=self.bert_layer_nums)
             hidden_states, next_decoder_cache, all_hidden_states, all_self_attentions, all_cross_attentions, \
             extended_attention_mask, head_mask, encoder_hidden_states, \
             encoder_extended_attention_mask, past_key_values, use_cache, output_attentions, output_hidden_states = x
@@ -113,9 +115,6 @@ class Model(nn.Module):
         out = self.get_my_bert_res(x, bert_continue)
         # print(out.keys())
         # print(out[0].shape)
-        # sequence_output = out[0]  # sequence_output = outputs.last_hidden_state
-        # sequence_output.mean(dim=1)
-        # out = self.dropout(sequence_output.mean(dim=1))
         out = self.dropout(out[1])
         out = self.fc(out)
         return out

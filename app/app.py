@@ -70,7 +70,7 @@ config.save_path = args.check_point_path
 if config.device.type == "cpu":
     model.load_state_dict(torch.load(config.save_path, map_location="cpu"))
 else:
-    model.load_state_dict(torch.load(config.save_path))
+    model.load_state_dict(torch.load(config.save_path, map_location=torch.device('cpu')))
 if config.MOE_model:
     bert_type = config.bert_type
     if "/" in config.bert_type:
@@ -239,7 +239,7 @@ def shap_analysis():
 @log_filter
 def text_classify_predict():
     query = request.get_json()
-    content = query['content']
+    content = query['text']
     threshold = query.get('threshold', 0.7)
     sentences = [content]
 
@@ -265,10 +265,14 @@ def text_classify_predict():
         predict_result = predict.cpu().numpy().tolist()
     print(predict_result)
     print(np.argmax(predict_result[0]))
-    class_score = {config.class_list[i]: x for i, x in enumerate(softmax_output_list[0])}
+    new_label_dict = {
+        "人员资料": "包含高管信息",
+        "其他": "不包含高管信息",
+    }
+    class_score = {new_label_dict[config.class_list[i]]: x for i, x in enumerate(softmax_output_list[0])}
 
     return jsonify({"content": content,
-                    "result": config.class_list[np.argmax(predict_result[0])],
+                    "result": new_label_dict[config.class_list[np.argmax(predict_result[0])]],
                     "class_score": class_score,
                     })
 

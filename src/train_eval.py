@@ -6,6 +6,7 @@ from copy import deepcopy
 # import neptune
 import neptune
 import numpy as np
+import tensorwatch
 import torch
 from sklearn import metrics
 from sklearn.metrics import precision_score, recall_score, f1_score
@@ -15,23 +16,28 @@ from torch.optim import AdamW, Adam
 from torch.nn import functional as F
 from tqdm import tqdm
 
-from src.bootstrapping_loss.loss import SoftBootstrappingLoss, HardBootstrappingLoss, compute_kl_loss
+from src.bootstrapping_loss.loss import SoftBootstrappingLoss, HardBootstrappingLoss, compute_kl_loss, \
+    CustomCrossEntropyLoss
 
 label_smoothing = 0.0005
 
 from torch.utils.tensorboard import SummaryWriter
-from transformers import get_linear_schedule_with_warmup
+from transformers import get_linear_schedule_with_warmup, AutoTokenizer
+
+from torchviz import make_dot
 
 from src.models.config import BaseConfig
 from src.processors import out_predict_dataset, out_test_dataset, batch_out_predict_dataset
 from src.utils.model_utils import get_time_dif
+
 α = 0
+
 
 def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
     start_time = time.time()
     run = neptune.init_run(
-        project="leon.zheng/text-classify",
-        api_token="eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiI0ZDMxY2FjMi0xYTA4LTRhN2YtODU2OC04NTAyYzk5MzQyY2MifQ==",
+        project="zhengzhao134/text-classify",
+        api_token="eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJmODJhNzQyZC1iODVjLTQxMGQtOTVmOC02YWY2YzdiZTgxNWUifQ==",
         tags=f"loss_fun:{config.loss_fun};\nmodel:{config.model_name};\nlr:{config.lr};\nbert_type:{config.bert_type}"
     )  # your credentials
 
@@ -62,9 +68,17 @@ def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
     if config.loss_fun == "cross_entropy":
         loss_func = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
     elif config.loss_fun == "soft_bootstrapping_loss":
-        loss_func = SoftBootstrappingLoss(beta=0.95, as_pseudo_label=True)
+        loss_func = SoftBootstrappingLoss(beta=config.loss_beta, as_pseudo_label=True)
     elif config.loss_fun == "hard_bootstrapping_loss":
-        loss_func = HardBootstrappingLoss(beta=0.8)
+        loss_func = HardBootstrappingLoss(beta=config.loss_beta)
+    elif config.loss_fun == "custom_cross_entropy":
+        keywords = [x.strip() for x in open(os.path.join(os.path.dirname(__file__),
+                                                         "../assets/data/topic_en_greenwashing/base_keywords.txt")).readlines()]
+        vocab_weights = {
+            x: 2.0 for x in keywords
+        }
+        tokenizer = AutoTokenizer.from_pretrained(config.bert_type)
+        loss_func = CustomCrossEntropyLoss(vocab_weights, tokenizer)
     log_dir = os.path.join(config.log_path, './' + config.model_name, f"./{config.bert_type}",
                            time.strftime('%m-%d_%H.%M', time.localtime()))
     writer = SummaryWriter(log_dir=log_dir)
@@ -95,20 +109,26 @@ def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
                     outputs = model(trains)
                     outputs = torch.unsqueeze(outputs, 0)
                     loss = loss_func(outputs, labels)
-
             else:
                 outputs = model(trains)
                 # print(f"train - outputs:{outputs.shape}, labels : {labels.shape}")
                 model.zero_grad()
                 try:
-                    loss = loss_func(outputs, labels)
+                    if config.loss_fun == "custom_cross_entropy":
+                        loss = loss_func(outputs, labels, trains[0])
+                    else:
+                        loss = loss_func(outputs, labels)
                 except:
                     outputs = torch.unsqueeze(outputs, 0)
-                    loss = loss_func(outputs, labels)
+                    if config.loss_fun == "custom_cross_entropy":
+                        loss = loss_func(outputs, labels, trains[0])
+                    else:
+                        loss = loss_func(outputs, labels)
             run["loss"].log(loss.item(), step=total_batch)
             loss.backward()
 
             optimizer.step()
+            # make_dot(outputs, params=dict(model.named_parameters())).render(config.model_name, format="pdf")
 
             if total_batch != 0 and total_batch % eval_step == 0:
                 # 每多少轮输出在训练集和验证集上的效果
@@ -162,10 +182,11 @@ def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
 
 
 def test(config: BaseConfig, model: nn.Module, data_iter):
-
     model.eval()
     start_time = time.time()
-    test_acc, test_loss, test_report, test_confusion = evaluate(config, model, data_iter, test_mode=True)
+    use_threshold = config.test_by_threshold
+    test_acc, test_loss, test_report, test_confusion = evaluate(config, model, data_iter, test_mode=True,
+                                                                use_threshold=use_threshold)
     msg = f"Test loss : {test_loss},Test acc: {test_acc}"
     print(msg)
     print(test_report)
@@ -307,16 +328,19 @@ def predict_batch(config: BaseConfig, model: nn.Module, data_iter, news_datas, d
     return res
 
 
-def evaluate(config: BaseConfig, model: nn.Module, data_iter, test_mode=False, predict_mode=False):
+def evaluate(config: BaseConfig, model: nn.Module, data_iter, test_mode=False, predict_mode=False, use_threshold=False):
     model.eval()
     loss_total = 0
     predict_all = np.array([], dtype="int")
     labels_all = np.array([], dtype="int")
     news_ids_all = []
     input_tokens_all = []
+    original_text_all = []
+    softmax_score_all = []
+    softmax_fun = torch.nn.Softmax(dim=1)
     with torch.no_grad():
         for i, _data in enumerate(data_iter):
-            trains, labels, news_ids = _data[0], _data[1], _data[2]
+            trains, labels, news_ids, original_text = _data[0], _data[1], _data[2], _data[3]
             input_tokens = trains[0]
             outputs = model(trains)
             # print(f"evaluate - outputs : {outputs.shape} , labels : {labels.shape}")
@@ -327,9 +351,43 @@ def evaluate(config: BaseConfig, model: nn.Module, data_iter, test_mode=False, p
                 loss = F.cross_entropy(outputs, labels, label_smoothing=label_smoothing)
             loss_total += loss
             labels = labels.data.cpu().numpy()
-            predict = torch.max(outputs.data, dim=1)[1].cpu().numpy()
+            softmax_output = softmax_fun(outputs.data)
+            if use_threshold:
+                if config.threshold_for_positive > -1:
+                    outputs = softmax_output
+                    softmax_output_list = softmax_output.data.cpu().numpy().tolist()
+                    predict_results = []
+                    predict_result_score = []
+                    for _softmax_output in softmax_output_list:
+                        if _softmax_output[1] > config.threshold_for_positive:
+                            predict_results.append(1)
+                        else:
+                            predict_results.append(0)
+                        predict_result_score.append(_softmax_output)
+                    predict_all = np.append(predict_all, np.array(predict_results))
+                    softmax_score_all.extend(predict_result_score)
+                else:
+                    outputs = softmax_output
+                    predict = torch.where(outputs > config.threshold, torch.ones_like(outputs),
+                                          torch.zeros_like(outputs))
+                    predict_results = []
+                    predict_result_score = []
+                    softmax_output_list = softmax_output.data.cpu().numpy().tolist()
+                    predict_list = predict.cpu().numpy().tolist()
+                    for predict_result, softmax_output in zip(predict_list, softmax_output_list):
+                        predict_results.append(np.argmax(predict_result))
+                        predict_result_score.append(softmax_output)
+                    # print("predict_result_score : ", predict_results)
+                    predict_all = np.append(predict_all, np.array(predict_results))
+                    softmax_score_all.extend(predict_result_score)
+            else:
+                softmax_score = softmax_output.data.cpu().numpy().tolist()
+                predict = torch.max(outputs.data, dim=1)[1].cpu().numpy()
+
+                predict_all = np.append(predict_all, predict)
+                softmax_score_all.extend(softmax_score)
             labels_all = np.append(labels_all, labels)
-            predict_all = np.append(predict_all, predict)
+            original_text_all.extend(original_text)
             # news_ids_all = news_ids_all.append(news_ids)
             # 保存token id，在后续的结果中进行还原
             # input_tokens_all = input_tokens_all.append(input_tokens.data.cpu().numpy().tolist())
@@ -337,6 +395,8 @@ def evaluate(config: BaseConfig, model: nn.Module, data_iter, test_mode=False, p
         acc = metrics.accuracy_score(labels_all, predict_all)
         print("***** eval report start")
         print(metrics.classification_report(labels_all, predict_all))
+        tn, fp, fn, tp = metrics.confusion_matrix(labels_all, predict_all).ravel()
+        print(f"(tn:{tn}, fp:{fp}, fn:{fn}, tp:{tp}) ")
         print("***** eval report end")
     if test_mode:
         report = None
@@ -344,13 +404,14 @@ def evaluate(config: BaseConfig, model: nn.Module, data_iter, test_mode=False, p
         try:
             report = metrics.classification_report(labels_all, predict_all)
             print(report)
-            confusion = metrics.confusion_matrix(labels_all, predict_all)
-            print(confusion)
+            tn, fp, fn, tp = metrics.confusion_matrix(labels_all, predict_all).ravel()
+            print(f"(tn:{tn}, fp:{fp}, fn:{fn}, tp:{tp}) ")
         except:
             pass
         # 将预测结果写到文件
         predict_all_list = predict_all.tolist()
-        out_test_dataset(predict_all_list, config)
+        labels_all_list = labels_all.tolist()
+        out_test_dataset(predict_all_list, labels_all_list, original_text_all, softmax_score_all, config)
         return acc, loss_total / len(data_iter), report, confusion
     if predict_mode:
         predict_all_list = predict_all.tolist()
