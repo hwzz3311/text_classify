@@ -34,12 +34,6 @@ from src.utils.model_utils import get_time_dif
 
 def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
     start_time = time.time()
-    run = neptune.init_run(
-        project="zhengzhao134/text-classify",
-        api_token="eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJmODJhNzQyZC1iODVjLTQxMGQtOTVmOC02YWY2YzdiZTgxNWUifQ==",
-        tags=f"loss_fun:{config.loss_fun};\nmodel:{config.model_name};\nlr:{config.lr};\nbert_type:{config.bert_type}"
-    )  # your credentials
-
     model.train()
     if "bert" in str(config.model_name).lower():
         param_optimizer = list(model.named_parameters())
@@ -123,7 +117,7 @@ def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
                         loss = loss_func(outputs, labels, trains[0])
                     else:
                         loss = loss_func(outputs, labels)
-            run["loss"].log(loss.item(), step=total_batch)
+            # run["loss"].log(loss.item(), step=total_batch)
             loss.backward()
 
             optimizer.step()
@@ -135,11 +129,11 @@ def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
                 predic = torch.max(outputs.data, 1)[1].cpu()
                 train_acc = metrics.accuracy_score(true, predic)
                 dev_acc, dev_loss, labels_all, predict_all = evaluate(config, model, dev_iter)
-                run["dev_loos"].log(dev_loss, step=total_batch)
-                run["dev_acc"].log(dev_acc, step=total_batch)
-                run["precision"].log(precision_score(labels_all, predict_all))
-                run["recall"].log(recall_score(labels_all, predict_all))
-                run["f1"].log(f1_score(labels_all, predict_all))
+                # run["dev_loos"].log(dev_loss, step=total_batch)
+                # run["dev_acc"].log(dev_acc, step=total_batch)
+                # run["precision"].log(precision_score(labels_all, predict_all))
+                # run["recall"].log(recall_score(labels_all, predict_all))
+                # run["f1"].log(f1_score(labels_all, predict_all))
                 if dev_loss < dev_best_loss:
                     dev_best_loss = dev_loss
                     dev_best_acc = dev_acc
