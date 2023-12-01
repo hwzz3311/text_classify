@@ -6,6 +6,7 @@ from copy import deepcopy
 # import neptune
 import neptune
 import numpy as np
+import tensorwatch
 import torch
 from sklearn import metrics
 from sklearn.metrics import precision_score, recall_score, f1_score
@@ -121,7 +122,7 @@ def train(config: BaseConfig, model: nn.Module, train_iter, dev_iter):
             loss.backward()
 
             optimizer.step()
-            make_dot(outputs, params=dict(model.named_parameters())).render(config.model_name, format="pdf")
+            # make_dot(outputs, params=dict(model.named_parameters())).render(config.model_name, format="pdf")
 
             if total_batch != 0 and total_batch % eval_step == 0:
                 # 每多少轮输出在训练集和验证集上的效果
